@@ -31,10 +31,10 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수 (아이콘 태그 & 기간 버그 수정)
+# 4. 차트 그리기 함수 (목표가 강조 디자인 적용)
 def draw_chart(ticker, period, title, unit, target_p=None):
     try:
-        # 3개월은 일봉(1d), 5년은 주봉(1wk)으로 설정하여 기간 겹침 방지
+        # 3개월은 일봉(1d), 5년은 주봉(1wk)으로 설정
         interval = "1d" if period == "3mo" else "1wk"
         df = yf.download(ticker, period=period, interval=interval)
         
@@ -49,15 +49,25 @@ def draw_chart(ticker, period, title, unit, target_p=None):
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # 5년 차트에만 빨간 점선 + 수치 아이콘 추가
+        # 5년 차트에만 빨간 점선 + 강조된 수치 아이콘 추가
         if target_p:
-            fig.add_hline(y=target_p, line_dash="dash", line_color="red")
+            fig.add_hline(y=target_p, line_dash="dash", line_color="red", opacity=0.7)
+            
+            # ▼ 여기가 변경된 부분입니다 ▼
             fig.add_annotation(
                 x=df.index[-1], y=target_p,
-                text=f"🎯 {unit}{target_p:,.0f}",
-                showarrow=False, yshift=10,
-                font=dict(color="white", size=12),
-                bgcolor="red", borderpad=4, opacity=0.9
+                # 1. <b> 태그로 텍스트 굵게 처리
+                text=f"<b>🎯 {unit}{target_p:,.0f}</b>", 
+                showarrow=False, 
+                yshift=15, # 선과 간격을 조금 더 띄움
+                # 2. 폰트 크기 키움 (12 -> 15)
+                font=dict(color="white", size=15), 
+                bgcolor="#FF0000", # 더 쨍한 빨강
+                # 3. 흰색 테두리 추가해서 박스 강조
+                bordercolor="white", 
+                borderwidth=2,
+                borderpad=6, # 박스 내부 여백 확보
+                opacity=1.0
             )
         
         fig.update_layout(
@@ -67,8 +77,8 @@ def draw_chart(ticker, period, title, unit, target_p=None):
             margin=dict(l=10, r=10, b=10, t=50)
         )
         return st.plotly_chart(fig, use_container_width=True)
-    except:
-        return st.write("차트 로딩 중...")
+    except Exception as e:
+        return st.write(f"차트 로딩 중 에러: {e}")
 
 # 5. 메인 로직 실행
 df_sheet = load_data()
