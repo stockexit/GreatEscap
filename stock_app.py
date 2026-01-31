@@ -47,19 +47,19 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # [수정] 중앙 정렬 (xref="paper", x=0.5) 및 글씨 크기 확대
+        # [수정] 중앙 정렬 + 글씨 크기(size=16) + Y축 눈금 크기 확대
         
         # 1. 매수 가치 (흰색 실선)
         if target_buy and target_buy > 0:
             fig.add_hline(y=target_buy, line_width=2, line_color="#FFFFFF", opacity=1.0)
             fig.add_annotation(
-                xref="paper", x=0.5, # [변경] 화면 정중앙
+                xref="paper", x=0.5, 
                 y=target_buy, 
                 text=f"<b>⚡ 매수 {unit}{target_buy:,.0f}</b>", 
                 showarrow=False, 
                 yshift=0, 
-                xanchor="center",    # [변경] 텍스트 중심점 기준
-                font=dict(color="black", size=14), # [변경] 글씨 크기 UP (12->14)
+                xanchor="center",    
+                font=dict(color="black", size=16), # [변경] 라벨 글씨 16px
                 bgcolor="#FFFFFF",
                 bordercolor="gray", borderwidth=1, opacity=0.9
             )
@@ -68,13 +68,13 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
         if target_min and target_min > 0:
             fig.add_hline(y=target_min, line_dash="dot", line_color="#00C853", opacity=0.8)
             fig.add_annotation(
-                xref="paper", x=0.5, # [변경] 화면 정중앙
+                xref="paper", x=0.5, 
                 y=target_min, 
                 text=f"<b>🛡️ 보수 {unit}{target_min:,.0f}</b>", 
                 showarrow=False, 
-                yshift=-25,          # 텍스트가 선과 겹치지 않게 간격 조금 더 둠
+                yshift=-25,          
                 xanchor="center", 
-                font=dict(color="white", size=15), # [변경] 글씨 크기 UP (13->15)
+                font=dict(color="white", size=16), # [변경] 라벨 글씨 16px
                 bgcolor="#00C853", bordercolor="white", borderwidth=1, opacity=0.9
             )
 
@@ -82,21 +82,30 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
         if target_max and target_max > 0:
             fig.add_hline(y=target_max, line_dash="dash", line_color="#FF3D00", opacity=0.8)
             fig.add_annotation(
-                xref="paper", x=0.5, # [변경] 화면 정중앙
+                xref="paper", x=0.5, 
                 y=target_max, 
                 text=f"<b>🚀 최대 {unit}{target_max:,.0f}</b>", 
                 showarrow=False, 
-                yshift=25,           # 텍스트가 선과 겹치지 않게 간격 조금 더 둠
+                yshift=25,           
                 xanchor="center", 
-                font=dict(color="white", size=15), # [변경] 글씨 크기 UP (13->15)
+                font=dict(color="white", size=16), # [변경] 라벨 글씨 16px
                 bgcolor="#FF3D00", bordercolor="white", borderwidth=1, opacity=0.9
             )
         
         fig.update_layout(
-            title=dict(text=f"{title} ({unit})", font=dict(size=18)),
+            title=dict(text=f"{title} ({unit})", font=dict(size=20)), # 제목도 살짝 키움
             height=450, template="plotly_dark", margin=dict(l=10, r=10, b=10, t=50),
             xaxis_rangeslider_visible=False,
-            xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True)
+            
+            # [변경] 축 설정: 움직임 잠금 + 글씨 크기 확대
+            xaxis=dict(
+                fixedrange=True,
+                tickfont=dict(size=12) # 날짜 글씨 크기
+            ), 
+            yaxis=dict(
+                fixedrange=True,
+                tickfont=dict(size=14) # [핵심] 오른쪽 가격 눈금 크기 확대 (14px)
+            )
         )
         
         config = {'displayModeBar': False, 'scrollZoom': False}
