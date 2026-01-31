@@ -44,14 +44,13 @@ df_sheet = load_data(url)
 # 4. 차트 그리기 함수 (SyntaxError 모든 지점 완벽 수술)
 def draw_chart(ticker, period, title):
     try:
-        # try-except-finally 구조 완성
+        # 5년치는 주 단위(1wk), 3개월치는 일 단위(1d)
         interval = "1wk" if period == "5y" else "1d"
         df = yf.download(ticker, period=period, interval=interval)
         
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
-        # st.write 괄호 닫기
         if df.empty:
             return st.write(f"⚠️ {title}: 데이터를 찾을 수 없습니다.")
 
@@ -60,7 +59,6 @@ def draw_chart(ticker, period, title):
             low=df['Low'], close=df['Close'], name=title
         )])
 
-        # 문자열 마감 및 f-string 완벽 체크
         fig.update_layout(
             title=dict(text=title, font=dict(size=18)),
             height=500, 
@@ -89,9 +87,19 @@ if df_sheet is not None and not df_sheet.empty:
     # 메인 화면 구성
     st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
 
-    # 함수 호출 괄호 마감 체크
     col1, col2 = st.columns(2)
     with col1:
         draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
     with col2:
-        draw_chart(s_info
+        draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장")
+
+    st.write("---")
+
+    # 레이아웃 하단 정보 출력
+    c_a, c_b = st.columns([1, 2])
+    with c_a:
+        st.metric("사장님 목표가", f"{s_info['적정가']}")
+    with c_b:
+        st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
+else:
+    st.error("데이터를 가져오는 데 실패했습니다. 구글 시트 설정을 확인해주세요.")
