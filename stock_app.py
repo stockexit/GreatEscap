@@ -17,16 +17,18 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# [NEW] 탭 글씨 크기 키우기 (CSS 스타일 주입)
+# [스타일] 탭 글씨 크기 키우기 + 표 헤더 강조
 # ---------------------------------------------------------
 st.markdown("""
 <style>
-    /* 탭(Tab) 텍스트 크기 키우기 */
     button[data-baseweb="tab"] div p {
-        font-size: 22px !important;
+        font-size: 20px !important;
         font-weight: bold !important;
-        padding-top: 5px !important;
-        padding-bottom: 5px !important;
+    }
+    /* 테이블 헤더 색상 변경 (선택사항) */
+    thead tr th {
+        background-color: #262730 !important;
+        color: white !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -35,7 +37,7 @@ st.markdown("""
 # 2. SSL 에러 방지
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# 3. 데이터 로딩 (구글 시트)
+# 3. 데이터 로딩
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -48,7 +50,7 @@ def load_data():
     except:
         return None
 
-# 4. [자동 로딩용] DART 데이터 수집 함수 (캐싱 적용 @st.cache_data)
+# 4. [업그레이드] 상세 재무제표 수집 함수
 @st.cache_data(show_spinner=False) 
 def fetch_dart_data(api_key, ticker_code, stock_name):
     try:
@@ -61,13 +63,29 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
 
     now_year = datetime.datetime.now().year 
     end_year = now_year
-    start_year = now_year - 10
+    start_year = now_year - 5 # 항목이 많아져서 최근 5~6년으로 집중 (원하시면 -10 수정 가능)
     
     financial_list = []
+    
+    # -----------------------------------------------------------
+    # [설정] 가져올 항목들과 순서 정의 (표준 손익계산서 순서)
+    # -----------------------------------------------------------
+    # (표시할 이름, DART에서 찾을 키워드 정규식)
+    target_items = [
+        ('1.매출액', '매출액|영업수익'),
+        ('2.매출원가', '매출원가'),
+        ('3.매출총이익', '매출총이익'),
+        ('4.판매비와관리비', '판매비와관리비'),
+        ('5.영업이익', '영업이익'),
+        ('6.법인세차감전이익', '법인세비용차감전|법인세차감전'),
+        ('7.법인세비용', '법인세비용'),
+        ('8.당기순이익', '당기순이익')
+    ]
     
     try:
         for year in range(start_year, end_year + 1):
             try:
+                # 11011: 사업보고서 (확정)
                 df = dart.finstate(ticker_code, year, reprt_code='11011')
             except:
                 df = None
@@ -75,38 +93,56 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
             if df is not None:
                 if 'account_nm' not in df.columns: continue 
 
+                # 연결/별도 필터링
                 if 'fs_div' in df.columns:
                     if 'CFS' in df['fs_div'].values:
                         df = df[df['fs_div'] == 'CFS']
                     elif 'OFS' in df['fs_div'].values:
                         df = df[df['fs_div'] == 'OFS']
                 
-                df['Year'] = year
-                cond_sales = df['account_nm'].str.contains('매출액|영업수익') & ~df['account_nm'].str.contains('원가')
-                cond_op = df['account_nm'].str.contains('영업이익')
-                cond_net = df['account_nm'].str.contains('당기순이익') & ~df['account_nm'].str.contains('포괄|지배|비지배')
-                
-                target_df = df[cond_sales | cond_op | cond_net].copy()
-                financial_list.append(target_df)
+                # --- 항목 매핑 로직 ---
+                for label, pattern in target_items:
+                    # 해당 키워드가 포함된 행 찾기 (원가 제외 로직 등 포함)
+                    if label == '1.매출액':
+                        mask = df['account_nm'].str.contains(pattern) & ~df['account_nm'].str.contains('원가')
+                    elif label == '8.당기순이익':
+                        mask = df['account_nm'].str.contains(pattern) & ~df['account_nm'].str.contains('포괄|지배|비지배')
+                    else:
+                        mask = df['account_nm'].str.contains(pattern)
+                    
+                    found_row = df[mask]
+                    
+                    if not found_row.empty:
+                        # 금액 추출 (콤마 제거)
+                        amount_str = str(found_row.iloc[0]['thstrm_amount'])
+                        try:
+                            amount = float(amount_str.replace(',', ''))
+                        except:
+                            amount = 0
+                        
+                        financial_list.append({
+                            'Year': str(year),
+                            'Item': label,
+                            'Amount': amount
+                        })
             
             time.sleep(0.1)
 
         if financial_list:
-            df_final = pd.concat(financial_list)
+            df_final = pd.DataFrame(financial_list)
             
-            def clean_number(x):
-                try:
-                    return float(str(x).replace(',', ''))
-                except:
-                    return 0
+            # 피벗 (행: Item, 열: Year) -> 우리가 아는 재무제표 모양
+            df_pivot = df_final.pivot_table(index='Item', columns='Year', values='Amount', aggfunc='sum')
             
-            df_final['thstrm_amount'] = df_final['thstrm_amount'].apply(clean_number)
-            df_clean = df_final[['Year', 'account_nm', 'thstrm_amount']]
-            
-            df_pivot = df_clean.pivot_table(index='Year', columns='account_nm', values='thstrm_amount', aggfunc='sum')
-            df_pivot = df_pivot / 100000000 # 억 단위
+            # 단위 변환 (억원)
+            df_pivot = df_pivot / 100000000
             df_pivot = df_pivot.round(0)
-            df_pivot = df_pivot.sort_index(ascending=True)
+            
+            # 순서 정렬 (1.매출액 ~ 8.당기순이익 순서대로)
+            df_pivot = df_pivot.sort_index()
+            
+            # 인덱스 이름 깔끔하게 (앞에 숫자 제거)
+            df_pivot.index = [idx.split('.')[1] for idx in df_pivot.index]
             
             return df_pivot, "OK"
         else:
@@ -177,17 +213,12 @@ if df_sheet is not None:
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
-        # ---------------------------------------------------------
-        # [NEW] 재무 데이터 자동 로딩 로직 (버튼 삭제됨)
-        # ---------------------------------------------------------
+        # --- 재무 데이터 로딩 ---
         dart_df = None
         if is_korea:
-            DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" # ⚠️ API 키 확인
-            
-            with st.spinner(f"📊 {selected} 10년치 재무제표 가져오는 중... (최초 1회만 로딩)"):
+            DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
+            with st.spinner(f"📊 {selected} 상세 재무제표 분석 중..."):
                 dart_df, msg = fetch_dart_data(DART_API_KEY, dart_code, selected)
-
-        # ---------------------------------------------------------
 
         # 지표 계산
         grade = s_info.get('투자등급', '미분류') 
@@ -214,10 +245,8 @@ if df_sheet is not None:
 
         st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
 
-        # 탭 구성
-        tab1, tab2 = st.tabs(["🚀 종목 대시보드", "📊 10년 재무제표"])
+        tab1, tab2 = st.tabs(["🚀 종목 대시보드", "📊 상세 재무제표"])
 
-        # --- 탭 1: 대시보드 ---
         with tab1:
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -250,24 +279,23 @@ if df_sheet is not None:
             else:
                 st.text("등록된 리포트 없음")
 
-        # --- 탭 2: 재무제표 (자동 로딩됨) ---
         with tab2:
-            st.markdown("### 📊 최근 10년 핵심 재무지표 (매출/영업이익/순이익)")
+            st.markdown(f"### 📊 {selected} 손익계산서 (단위: 억원)")
             
             if is_korea:
                 if dart_df is not None:
-                    st.markdown(f"**단위: 억원** (종목: {selected})")
-                    st.dataframe(dart_df, use_container_width=True, height=500)
+                    # 표를 더 예쁘게 표시
+                    st.dataframe(dart_df, use_container_width=True, height=600)
                     
                     csv = dart_df.to_csv().encode('utf-8-sig')
                     st.download_button(
                         label="💾 엑셀(CSV)로 다운로드",
                         data=csv,
-                        file_name=f"{selected}_10년재무제표.csv",
+                        file_name=f"{selected}_상세재무제표.csv",
                         mime='text/csv',
                     )
                 else:
-                    st.warning(f"데이터를 가져오지 못했습니다. (메시지: {msg if 'msg' in locals() else '데이터 없음'})")
+                    st.warning(f"데이터가 없거나 금융업(은행/보험) 종목일 수 있습니다. (제조업/서비스업 기준)")
             else:
                 st.info("🇺🇸 미국 주식은 DART 재무제표 조회를 지원하지 않습니다.")
 
