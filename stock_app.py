@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components 
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
@@ -7,7 +6,6 @@ import ssl
 import OpenDartReader
 import time
 import datetime
-import re
 
 # 1. 화면 설정
 st.set_page_config(
@@ -17,21 +15,12 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# [스타일] 탭 & 표 디자인 강화
+# [스타일] 가독성 강화
 # ---------------------------------------------------------
 st.markdown("""
 <style>
-    /* 탭 글씨 크기 확대 */
-    button[data-baseweb="tab"] div p {
-        font-size: 18px !important;
-        font-weight: bold !important;
-    }
-    /* 데이터프레임 헤더 스타일 */
-    thead tr th {
-        background-color: #333333 !important;
-        color: #ffffff !important;
-        font-size: 15px !important;
-    }
+    button[data-baseweb="tab"] div p { font-size: 18px !important; font-weight: bold !important; }
+    thead tr th { background-color: #333333 !important; color: white !important; font-size: 15px !important; }
 </style>
 """, unsafe_allow_html=True)
 # ---------------------------------------------------------
@@ -39,7 +28,7 @@ st.markdown("""
 # 2. SSL 에러 방지
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# 3. 구글 시트 데이터 로딩
+# 3. 기본 데이터 로딩
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -52,63 +41,49 @@ def load_data():
     except:
         return None
 
-# 4. [NEW] 스마트 DART 수집 함수 (원하는 대로 골라먹기)
+# 4. [핵심] DART 데이터 원본 수집 함수 (필터링 X)
 @st.cache_data(show_spinner=False) 
-def fetch_full_financials(api_key, ticker_code, report_type='annual'):
-    """
-    report_type: 'annual' (사업보고서-10년), 'quarter' (분기보고서-최근3년)
-    """
+def fetch_all_financials(api_key, ticker_code):
     try:
         dart = OpenDartReader(api_key)
     except Exception as e:
          return None, f"API 키 오류: {e}"
 
     if len(str(ticker_code)) != 6:
-        return None, "DART 조회 불가 (종목코드 확인)"
+        return None, "DART 조회 불가 (종목코드 6자리 확인)"
 
-    # --- 기간 설정 ---
     now_year = datetime.datetime.now().year 
+    # 최근 5년치만 가져옵니다 (데이터 양이 많아서 속도 조절)
+    # 원하시면 range(now_year - 10, now_year + 1)로 수정 가능
+    years = range(now_year - 5, now_year + 1) 
     
-    if report_type == 'annual':
-        # 연간은 10년치
-        start_year = now_year - 10
-        reprt_code = '11011' # 사업보고서
-        years_range = range(start_year, now_year + 1)
-    else:
-        # 분기는 데이터가 많아서 최근 3년만 (속도 문제)
-        start_year = now_year - 3
-        # 1분기(11013), 반기(11012), 3분기(11014) - 여기선 대표적으로 1분기만 예시로 하거나, 
-        # 사용자가 선택하게 해야 하는데 복잡하므로 '사업보고서(연간)' 위주로 하되
-        # 로직을 유연하게 짭니다. 여기선 요청하신 '연간/분기' 구분을 위해
-        # 분기 데이터는 최근 보고서를 긁어오는게 좋지만, DART API 구조상 연도별 루프가 안정적입니다.
-        # 편의상 분기 선택시 '반기보고서(11012)'를 기준으로 가져오겠습니다.
-        reprt_code = '11012' 
-        years_range = range(start_year, now_year + 1)
+    all_data_list = []
     
-    financial_list = []
+    # 진행률 표시
+    status_text = st.empty()
     
     try:
-        for year in years_range:
+        for year in years:
+            status_text.text(f"📅 {year}년도 데이터 원본 가져오는 중...")
             try:
-                # 데이터 요청
-                df = dart.finstate(ticker_code, year, reprt_code=reprt_code)
+                # 11011: 사업보고서 (연간 확정 실적)
+                df = dart.finstate(ticker_code, year, reprt_code='11011')
             except:
                 df = None
 
             if df is not None:
                 df['Year'] = str(year)
-                # 필요한 컬럼만 남기기 (메모리 절약)
-                # rcept_no(접수번호) 등은 제외
-                cols = ['Year', 'fs_div', 'fs_nm', 'sj_div', 'sj_nm', 'account_nm', 'thstrm_amount']
-                # 없는 컬럼은 패스
+                # 필요한 컬럼만 선택 (sj_nm: 재무제표 종류, account_nm: 계정명)
+                cols = ['Year', 'fs_div', 'sj_div', 'sj_nm', 'account_nm', 'thstrm_amount', 'ord']
                 valid_cols = [c for c in cols if c in df.columns]
-                financial_list.append(df[valid_cols])
+                all_data_list.append(df[valid_cols])
             
-            # 0.1초 딜레이
-            time.sleep(0.05)
+            time.sleep(0.1) # 서버 차단 방지
 
-        if financial_list:
-            df_final = pd.concat(financial_list)
+        status_text.empty() # 메시지 삭제
+
+        if all_data_list:
+            df_final = pd.concat(all_data_list)
             
             # 금액 숫자 변환
             def clean_number(x):
@@ -124,6 +99,7 @@ def fetch_full_financials(api_key, ticker_code, report_type='annual'):
             return None, "데이터 없음"
 
     except Exception as e:
+        status_text.empty()
         return None, f"에러: {e}"
 
 # 5. 차트 함수
@@ -177,6 +153,7 @@ if df_sheet is not None:
         
         raw_code = str(s_info['코드']).strip().upper()
         if market_choice == "한국(KRW)":
+            import re
             dart_code = "".join(re.findall(r'\d+', raw_code))
             if len(dart_code) < 6: dart_code = dart_code.zfill(6)
             yf_code = dart_code + ".KQ" if raw_code.endswith(".KQ") else dart_code + ".KS"
@@ -189,33 +166,36 @@ if df_sheet is not None:
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
         # 지표 계산
-        grade = s_info.get('투자등급', '미분류') 
-        badge_color = {"코어": "#2962FF", "위성": "#FFAB00", "시가존": "#2E7D32"}.get(grade, "#616161")
-        badge_icon = {"코어": "💎", "위성": "🛰️", "시가존": "🚬"}.get(grade, "❔")
-        badge_text = {"코어": "CORE", "위성": "SATELLITE", "시가존": "시가존"}.get(grade, "미지정")
-
+        t_min = float(s_info.get('보수적적정가', 0))
+        t_max = float(s_info.get('최대미래가치', 0))
+        t_buy = float(s_info.get('매수가치', 0))
+        
         try:
             ticker_obj = yf.Ticker(yf_code)
             history = ticker_obj.history(period="1d")
             current_p = history['Close'].iloc[-1] if not history.empty else 0
-            
-            t_min = float(s_info.get('보수적적정가', 0))
-            t_max = float(s_info.get('최대미래가치', 0))
-            t_buy = float(s_info.get('매수가치', 0))
             
             gap_min = ((t_min - current_p)/current_p)*100 if current_p else 0
             gap_max = ((t_max - current_p)/current_p)*100 if current_p else 0
             gap_buy = ((t_buy - current_p)/current_p)*100 if current_p else 0
             cagr_min = ((t_min/current_p)**(1/7)-1)*100 if current_p and t_min else 0
             cagr_max = ((t_max/current_p)**(1/7)-1)*100 if current_p and t_max else 0
+            
+            grade = s_info.get('투자등급', '미분류') 
+            badge_color = {"코어": "#2962FF", "위성": "#FFAB00", "시가존": "#2E7D32"}.get(grade, "#616161")
+            badge_icon = {"코어": "💎", "위성": "🛰️", "시가존": "🚬"}.get(grade, "❔")
+            badge_text = {"코어": "CORE", "위성": "SATELLITE", "시가존": "시가존"}.get(grade, "미지정")
+            
         except:
             current_p = 0; gap_min=gap_max=gap_buy=cagr_min=cagr_max=0
 
         st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
 
-        tab1, tab2 = st.tabs(["🚀 종목 대시보드", "📊 상세 재무 분석"])
+        tab1, tab2 = st.tabs(["🚀 종목 대시보드", "📊 전체 재무제표 (원본)"])
 
-        # --- 탭 1: 대시보드 ---
+        # ----------------------------------------------
+        # [탭 1] 대시보드
+        # ----------------------------------------------
         with tab1:
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -230,104 +210,4 @@ if df_sheet is not None:
                 if cagr_max: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_max:+.1f}%</div>", unsafe_allow_html=True)
 
             st.write("---")
-            col1, col2 = st.columns(2)
-            with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
-            with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, t_min, t_max, t_buy)
-
-            st.write("---")
-            st.subheader("📌 핵심 요약 (메모)")
-            st.info(s_info.get('메모', '메모 없음'))
-            
-            st.subheader("💡 심층 리포트")
-            note = s_info.get('노트링크', '')
-            if note and "docs.google.com" in str(note):
-                components.iframe(note.replace("/edit", "/preview"), height=800, scrolling=True)
-            elif s_info.get('이미지URL'):
-                st.image(s_info.get('이미지URL'), use_container_width=True)
-                if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
-            else:
-                st.text("등록된 리포트 없음")
-
-        # --- 탭 2: 상세 재무 분석 (필터 적용) ---
-        with tab2:
-            st.markdown(f"### 📊 {selected} 재무제표 분석기")
-            
-            if not is_korea:
-                st.info("🇺🇸 미국 주식은 DART 재무제표 조회를 지원하지 않습니다. (야후 파이낸스 데이터 연동 필요)")
-            else:
-                DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" # 본인 키
-
-                # 1. 컨트롤 패널 (필터)
-                col_f1, col_f2, col_f3 = st.columns(3)
-                
-                with col_f1:
-                    freq_opt = st.selectbox("📅 기간 선택", ["연간 (10년)", "반기/분기 (최근 3년)"])
-                    # 함수에 넘길 파라미터 변환
-                    req_type = 'annual' if "연간" in freq_opt else 'quarter'
-                
-                with col_f2:
-                    # 데이터 로딩 (여기서 가져옴)
-                    with st.spinner("DART 데이터 가져오는 중..."):
-                        raw_df, msg = fetch_full_financials(DART_API_KEY, dart_code, req_type)
-                    
-                    if raw_df is not None:
-                        # 연결/별도 필터 구성
-                        fs_options = raw_df['fs_nm'].unique() # 보통 ['연결재무제표', '재무제표']
-                        selected_fs = st.selectbox("🏢 연결/별도 선택", fs_options)
-                    else:
-                        selected_fs = None
-
-                with col_f3:
-                    if raw_df is not None:
-                        # 재무제표 종류 (손익, 재무상태, 현금흐름)
-                        sj_options = raw_df['sj_nm'].unique() # ['재무상태표', '손익계산서', ...]
-                        selected_sj = st.selectbox("📑 표 종류 선택", sj_options)
-                    else:
-                        selected_sj = None
-
-                st.write("---")
-
-                # 2. 데이터 필터링 및 출력
-                if raw_df is not None and selected_fs and selected_sj:
-                    # 선택한 조건으로 필터링
-                    mask = (raw_df['fs_nm'] == selected_fs) & (raw_df['sj_nm'] == selected_sj)
-                    filtered_df = raw_df[mask].copy()
-                    
-                    if not filtered_df.empty:
-                        # 피벗: 행(계정명), 열(연도), 값(금액)
-                        # 중복 제거 (가끔 DART에 중복 행 존재)
-                        filtered_df = filtered_df.drop_duplicates(subset=['account_nm', 'Year'])
-                        
-                        pivot_df = filtered_df.pivot(index='account_nm', columns='Year', values='thstrm_amount')
-                        
-                        # 단위 변환 (억원)
-                        pivot_df = pivot_df / 100000000
-                        pivot_df = pivot_df.round(0)
-                        
-                        # 열(연도) 정렬: 최신이 왼쪽으로 오게 (내림차순)
-                        sorted_cols = sorted(pivot_df.columns, reverse=True)
-                        pivot_df = pivot_df[sorted_cols]
-                        
-                        # 행(계정명) 정렬: DART 원본 순서가 없으므로, 최대한 손익계산서 순서대로 보고 싶다면
-                        # 별도 매핑이 필요하지만, 여기서는 '모든 항목'을 보여주는게 목적이므로 있는 그대로 출력
-                        
-                        st.markdown(f"**💰 단위: 억원** | {selected_fs} | {selected_sj}")
-                        st.dataframe(pivot_df, use_container_width=True, height=700)
-                        
-                        # 다운로드
-                        csv = pivot_df.to_csv().encode('utf-8-sig')
-                        st.download_button(
-                            label="💾 현재 표 엑셀 다운로드",
-                            data=csv,
-                            file_name=f"{selected}_{selected_sj}_{selected_fs}.csv",
-                            mime='text/csv'
-                        )
-                    else:
-                        st.warning("선택하신 조건에 해당하는 데이터가 없습니다.")
-                elif raw_df is None:
-                    st.error(f"데이터를 불러오지 못했습니다: {msg}")
-
-    else:
-        st.warning("종목 없음")
-else:
-    st.error("데이터 로딩 실패")
+            col1, col2 = st.columns(
