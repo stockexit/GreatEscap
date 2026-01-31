@@ -46,19 +46,20 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
         )])
         
         # --- [수정됨] 현재가 라인 (3개월 차트용) ---
-        # 중앙 정렬 + 글씨 키움 + 한글로 변경
+        # 스타일 통일: 분홍색 배경 + 흰색 글씨 + 16px
         if current_price and current_price > 0:
             fig.add_hline(y=current_price, line_dash="dot", line_color="#FF4081", line_width=1)
             fig.add_annotation(
                 xref="paper", 
-                x=0.5,               # [변경] 화면 중앙
+                x=0.5,               # 화면 중앙
                 y=current_price, 
-                text=f"<b>현재가 {unit}{current_price:,.0f}</b>", # [변경] 텍스트 수정
+                text=f"<b>현재가 {unit}{current_price:,.0f}</b>", 
                 showarrow=False, 
-                xanchor="center",    # [변경] 가운데 정렬
-                yshift=10,           # 선 바로 위에 배치
-                font=dict(color="#FF4081", size=16), # [변경] 글씨 크기 확대 (16px)
-                bgcolor="rgba(0,0,0,0.7)" # 배경을 조금 더 진하게 해서 글씨 잘 보이게
+                xanchor="center",    
+                yshift=10,           
+                font=dict(color="white", size=16),   # [변경] 글씨 흰색 + 16px
+                bgcolor="#FF4081",                   # [변경] 배경을 라인색(분홍)으로 통일
+                bordercolor="white", borderwidth=1, opacity=0.9
             )
 
         # --- 가치 평가 라인들 (5년 차트용) ---
