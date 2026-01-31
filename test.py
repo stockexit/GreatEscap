@@ -3,18 +3,20 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 
-# 1. 화면 설정 (사장님이 좋아하신 '왼쪽 메뉴 고정' 버전)
+# 1. 화면 설정 (메뉴창을 처음부터 펼쳐서 고정)
 st.set_page_config(
     page_title="사장님 투자 터미널", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
 
-# 2. 지저분한 요소 제거 (에러 방지를 위해 헤더는 살려둡니다)
+# 2. [순정 스타일] 로고 가리기 기능을 빼서 모바일 메뉴 버튼을 살렸습니다.
 st.markdown("""
     <style>
+    /* 하단 푸터와 우측 상단 메뉴만 깔끔하게 제거 */
     footer {visibility: hidden;}
-    div[data-testid="stToolbar"] {visibility: hidden !important;}
+    #MainMenu {visibility: hidden;}
+    
     /* 사이드바 가독성 향상 */
     [data-testid="stSidebar"] { min-width: 260px; }
     </style>
@@ -34,10 +36,10 @@ def load_data(csv_url):
 
 df_sheet = load_data(url)
 
-# 4. 차트 그리기 함수 (SyntaxError 완벽 박멸)
+# 4. 차트 그리기 함수 (SyntaxError 완벽 박멸 수술 완료)
 def draw_chart(ticker, period, title):
     try:
-        # 3개월은 일간 데이터, 5년은 주간 데이터
+        # 3개월은 일봉, 5년은 주봉/로그차트
         interval = "1wk" if period == "5y" else "1d"
         df = yf.download(ticker, period=period, interval=interval)
         
@@ -45,7 +47,7 @@ def draw_chart(ticker, period, title):
             df.columns = df.columns.get_level_values(0)
             
         if df.empty:
-            return st.write(f"⚠️ {title}: 데이터를 찾을 수 없습니다.")
+            return st.write(f"⚠️ {title}: 데이터 로딩 중...")
 
         fig = go.Figure(data=[go.Candlestick(
             x=df.index, open=df['Open'], high=df['High'], 
@@ -62,12 +64,31 @@ def draw_chart(ticker, period, title):
         )
         return st.plotly_chart(fig, use_container_width=True)
     except:
-        return st.error(f"⚠️ {title}: 로딩 에러")
+        return st.error(f"⚠️ {title}: 데이터를 가져올 수 없습니다.")
 
-# 5. 메인 실행 로직 (NameError 방지를 위해 순서 조정)
+# 5. 메인 실행 로직 (NameError 방지를 위해 모든 변수를 이 안에 넣음)
 if df_sheet is not None and not df_sheet.empty:
-    # 사이드바: 종목 선택
+    # 사이드바: 종목 선택 메뉴
     st.sidebar.markdown("## 🎯 분석 종목 리스트")
     st.sidebar.write("---")
     
-    stock_names = df_sheet['종목
+    stock_names = df_sheet['종목명'].unique().tolist()
+    selected = st.sidebar.selectbox("종목을 고르세요 👇", stock_names)
+    s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
+    
+    st.sidebar.write("---")
+    st.sidebar.success(f"현재 분석: **{selected}**")
+
+    # 메인 화면 구성
+    st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
+
+    # 차트 배치 (PC는 가로, 모바일은 세로 자동 정렬)
+    col1, col2 = st.columns(2)
+    with col1:
+        draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
+    with col2:
+        draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장")
+
+    st.write("---")
+
+    # 하단 정보 리포트
