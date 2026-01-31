@@ -4,17 +4,17 @@ import pandas as pd
 import plotly.graph_objects as go
 import ssl
 
-# 1. 화면 설정 (순정 상태 유지, 메뉴는 처음부터 열어둠)
+# 1. 화면 설정 (메뉴 상시 오픈)
 st.set_page_config(
     page_title="사장님 투자 터미널", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
 
-# 2. 로컬 실행 시 SSL 에러 방지 (image_db5c14 에러 해결용)
+# 2. SSL 에러 방지
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# 3. 데이터 로딩 함수 (SyntaxError 박멸 수술 완료)
+# 3. 데이터 로딩 (캐시 60초 설정)
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -46,32 +46,29 @@ def draw_chart(ticker, period, title):
         )
         return st.plotly_chart(fig, use_container_width=True)
     except:
-        return st.write("차트 데이터를 불러오는 중...")
+        return st.write("데이터 로딩 중...")
 
 # 5. 메인 실행 로직
 df_sheet = load_data()
 
 if df_sheet is not None:
-    # 사이드바: 종목 선택
+    # 사이드바 설정
     st.sidebar.markdown("## 🎯 종목 리스트")
-    selected = st.sidebar.selectbox("종목을 골라주세요 👇", df_sheet['종목명'].unique())
+    selected = st.sidebar.selectbox("종목 선택 👇", df_sheet['종목명'].unique())
     s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
     
-    # [새 기능] 실시간 현재가 및 목표 수익률 계산
+    # 실시간 주가 및 수익률
     try:
-        ticker_data = yf.Ticker(s_info['코드'])
-        # 가장 최근 종가(현재가) 가져오기
-        current_p = ticker_data.history(period="1d")['Close'].iloc[-1]
+        ticker_obj = yf.Ticker(s_info['코드'])
+        current_p = ticker_obj.history(period="1d")['Close'].iloc[-1]
         target_p = float(s_info['적정가'])
-        # 수익률(%) = (목표가 - 현재가) / 현재가 * 100
         gap_percent = ((target_p - current_p) / current_p) * 100
     except:
         current_p, target_p, gap_percent = 0, 0, 0
 
-    # 메인 화면 구성
     st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
     
-    # 실시간 지표 요약
+    # 상단 요약 지표
     c1, c2, c3 = st.columns(3)
     c1.metric("실시간 현재가", f"${current_p:.2f}")
     c2.metric("사장님 목표가", f"${target_p:.2f}")
@@ -79,14 +76,13 @@ if df_sheet is not None:
 
     st.write("---")
 
-    # 차트 배치 (PC는 가로 2개, 모바일은 세로 자동 정렬)
+    # 차트 배치
     col1, col2 = st.columns(2)
     with col1:
-        draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
+        draw_chart(s_info['코드'], "3mo", "📅 최근 3개월")
     with col2:
         draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장")
 
     st.write("---")
-    st.success(f"**💡 분석 메모:**\n\n{s_info['메메']}")
-else:
-    st.error("데이터 로딩 실패! 구글 시트 주소를 확인해주세요.")
+    # [수정 완료] '메메'를 '메모'로 고쳤습니다!
+    st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
