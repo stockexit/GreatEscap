@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import ssl
 import OpenDartReader
 import time
+import re # 정규표현식 사용
 
 # 1. 화면 설정
 st.set_page_config(
@@ -30,7 +31,7 @@ def load_data():
     except:
         return None
 
-# 4. DART 데이터 수집 함수
+# 4. [수정됨] DART 데이터 수집 함수 (fs_div 에러 방지)
 def fetch_dart_data(api_key, ticker_code, stock_name):
     try:
         dart = OpenDartReader(api_key)
@@ -57,7 +58,15 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
             df = dart.finstate(ticker_code, year, reprt_code='11011')
             
             if df is not None:
-                df = df[df['fs_div'] == 'CFS'] # 연결재무제표
+                # --- [수정된 부분] fs_div 컬럼이 있을 때만 필터링 ---
+                if 'fs_div' in df.columns:
+                    # 연결(CFS)이 있으면 연결을 쓰고, 없으면 그냥 둠
+                    if 'CFS' in df['fs_div'].values:
+                        df = df[df['fs_div'] == 'CFS']
+                    # 만약 연결이 없고 별도(OFS)만 있다면 별도를 씀 (선택사항)
+                    elif 'OFS' in df['fs_div'].values:
+                        df = df[df['fs_div'] == 'OFS']
+                
                 df['Year'] = year
                 
                 cond_sales = df['account_nm'].str.contains('매출액|영업수익') & ~df['account_nm'].str.contains('원가')
@@ -75,9 +84,11 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
 
         if financial_list:
             df_final = pd.concat(financial_list)
+            # 숫자 변환 (콤마 제거)
             df_final['thstrm_amount'] = df_final['thstrm_amount'].astype(str).str.replace(',', '').astype(float)
             df_clean = df_final[['Year', 'account_nm', 'thstrm_amount']]
             
+            # 피벗
             df_pivot = df_clean.pivot_table(index='Year', columns='account_nm', values='thstrm_amount', aggfunc='sum')
             df_pivot = df_pivot / 100000000 # 억 단위
             df_pivot = df_pivot.round(0)
@@ -129,9 +140,7 @@ if df_sheet is not None:
     st.sidebar.markdown("## 🌍 시장 선택")
     market_choice = st.sidebar.radio("보고 싶은 시장", ["한국(KRW)", "미국(USD)"])
     
-    # 시장 필터링 로직 수정 (자동 인식)
     if market_choice == "한국(KRW)":
-        # .KS, .KQ로 끝나거나 숫자만 있는 경우
         filtered_df = df_sheet[df_sheet['Market'] == "한국(KRW)"]
     else:
         filtered_df = df_sheet[df_sheet['Market'] == "미국(USD)"]
@@ -143,24 +152,18 @@ if df_sheet is not None:
         selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
         s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
         
-        # --- [핵심] 티커 코드 정제 로직 (에러 해결의 열쇠 🗝️) ---
+        # 티커 정제
         raw_code = str(s_info['코드']).strip().upper()
         
         if market_choice == "한국(KRW)":
-            # 1. DART용 코드: 숫자만 남기기 (예: "280360.KS" -> "280360")
-            # 문자 제거하고 숫자만 추출
-            import re
             dart_code = "".join(re.findall(r'\d+', raw_code))
-            if len(dart_code) < 6: dart_code = dart_code.zfill(6) # 005930 같이 앞자리 0 채우기
+            if len(dart_code) < 6: dart_code = dart_code.zfill(6)
             
-            # 2. yfinance용 코드: 뒤에 .KS가 없으면 붙이기
-            # 코스닥인지 코스피인지 모르면 일단 KS 시도 (대부분 KS)
             if raw_code.endswith(".KQ"):
                 yf_code = dart_code + ".KQ"
             else:
                 yf_code = dart_code + ".KS"
         else:
-            # 미국주식은 그대로
             dart_code = raw_code
             yf_code = raw_code
 
@@ -168,17 +171,16 @@ if df_sheet is not None:
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
-        # --- DART 데이터 수집 버튼 ---
+        # --- DART 버튼 ---
         if is_korea:
             st.sidebar.markdown("---")
             st.sidebar.subheader("📊 재무 데이터 수집")
             
-            # ⚠️ 본인의 DART API 키 확인 필수!
+            # ⚠️ 본인 API 키 입력 필수
             DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
             
             if st.sidebar.button("10년치 재무제표 가져오기 (클릭)"):
                 with st.spinner('DART 접속 중...'):
-                    # 정제된 dart_code(6자리 숫자)를 넘겨줌
                     dart_df, msg = fetch_dart_data(DART_API_KEY, dart_code, selected)
                     
                     if dart_df is not None:
@@ -187,14 +189,13 @@ if df_sheet is not None:
                     else:
                         st.sidebar.error(msg)
         
-        # --- 가격 및 지표 계산 ---
+        # --- 지표 계산 ---
         grade = s_info.get('투자등급', '미분류') 
         badge_color = {"코어": "#2962FF", "위성": "#FFAB00", "시가존": "#2E7D32"}.get(grade, "#616161")
         badge_icon = {"코어": "💎", "위성": "🛰️", "시가존": "🚬"}.get(grade, "❔")
         badge_text = {"코어": "CORE", "위성": "SATELLITE", "시가존": "시가존"}.get(grade, "미지정")
 
         try:
-            # 정제된 yf_code 사용
             ticker_obj = yf.Ticker(yf_code)
             history = ticker_obj.history(period="1d")
             current_p = history['Close'].iloc[-1] if not history.empty else 0
@@ -212,7 +213,6 @@ if df_sheet is not None:
         except:
             current_p = 0; gap_min=gap_max=gap_buy=cagr_min=cagr_max=0
 
-        # --- 메인 화면 출력 ---
         st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
         
         if 'dart_data' in st.session_state and is_korea:
