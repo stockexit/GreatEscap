@@ -10,14 +10,21 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# 2. 불필요한 요소 제거 (깔끔한 순정 스타일)
+# 2. [수정] 메뉴 버튼은 살리고 지저분한 요소만 가리는 정밀 CSS
 st.markdown("""
     <style>
-    header {visibility: hidden;}
+    /* 하단 푸터와 툴바만 제거 */
     footer {visibility: hidden;}
-    [data-testid="stToolbar"] {visibility: hidden !important;}
-    /* 사이드바 너비 조절 */
-    [data-testid="stSidebar"] { min-width: 250px; max-width: 250px; }
+    div[data-testid="stToolbar"] {visibility: hidden !important;}
+    
+    /* 모바일 메뉴 버튼(헤더)은 살리되, 불필요한 여백만 제거 */
+    header[data-testid="stHeader"] {
+        background-color: rgba(0,0,0,0);
+        height: 3rem;
+    }
+    
+    /* 사이드바 너비 고정 */
+    [data-testid="stSidebar"] { min-width: 260px; max-width: 260px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -35,7 +42,7 @@ def load_data(csv_url):
 
 df_sheet = load_data(url)
 
-# 4. [수정] 다시 사이드바로 이동한 종목 선택 메뉴
+# 4. 사이드바 종목 선택 메뉴
 if df_sheet is not None and not df_sheet.empty:
     st.sidebar.markdown("## 🎯 종목 리서치")
     st.sidebar.write("---")
@@ -51,17 +58,17 @@ else:
     st.error("데이터 로딩 실패! 시트 설정을 확인해주세요.")
     st.stop()
 
-# 5. 차트 그리기 함수 (SyntaxError 모든 지점 수술 완료)
+# 5. 차트 그리기 함수 (SyntaxError 모든 지점 완벽 수술)
 def draw_chart(ticker, period, title):
     try:
-        # ternary operator 완성
+        # else 구문 추가
         interval = "1wk" if period == "5y" else "1d"
         df = yf.download(ticker, period=period, interval=interval)
         
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
-        # f-string 따옴표 닫기
+        # f-string 따옴표 마감
         if df.empty:
             return st.write(f"⚠️ {title}: 데이터 없음")
 
@@ -70,7 +77,7 @@ def draw_chart(ticker, period, title):
             low=df['Low'], close=df['Close'], name=title
         )])
 
-        # dict 괄호 닫기 및 레이아웃 설정
+        # dict 괄호 및 레이아웃 설정
         fig.update_layout(
             title=dict(text=title, font=dict(size=18)),
             height=500, 
@@ -82,5 +89,3 @@ def draw_chart(ticker, period, title):
             yaxis=dict(fixedrange=True)
         )
         return st.plotly_chart(fig, use_container_width=True)
-    except:
-        return st.write(
