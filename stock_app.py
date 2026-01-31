@@ -67,17 +67,14 @@ def fetch_value_metrics(api_key, ticker_code):
                 # 11011: 사업보고서 (연간)
                 df = dart.finstate(ticker_code, year, reprt_code='11011')
             except:
-                pass # 없으면 패스
+                pass 
 
-            # [수정] 데이터가 있고, 컬럼도 온전한지 체크
             if df is not None and not df.empty and 'account_nm' in df.columns:
                 
-                # [수정] 공백 제거 후 검색 (띄어쓰기 때문에 못 찾는 경우 방지)
-                # 예: "기본 주당 이익" -> "기본주당이익"
+                # 공백 제거 후 검색 (띄어쓰기 방지)
                 df['account_clean'] = df['account_nm'].astype(str).str.replace(' ', '')
 
                 # 1. 당기순이익 찾기 (지배주주 우선)
-                # '당기순이익' 글자가 있고, '포괄'은 없고
                 mask_net = df['account_clean'].str.contains('당기순이익') & ~df['account_clean'].str.contains('포괄')
                 
                 # 2. EPS 찾기 (기본 + 주당)
@@ -93,7 +90,6 @@ def fetch_value_metrics(api_key, ticker_code):
                     rows_net = target_df[mask_net]
                     net_income = 0
                     
-                    # 지배기업소유주지분 순이익이 있으면 그걸 씀 (가장 정확)
                     row_controlling = rows_net[rows_net['account_clean'].str.contains('지배')]
                     if not row_controlling.empty:
                         target_row = row_controlling.iloc[0]
@@ -110,7 +106,6 @@ def fetch_value_metrics(api_key, ticker_code):
                     rows_eps = target_df[mask_eps]
                     eps = 0
                     if not rows_eps.empty:
-                        # 보통주 우선
                         row_common = rows_eps[~rows_eps['account_clean'].str.contains('우선')]
                         if not row_common.empty:
                             eps_row = row_common.iloc[0]
@@ -159,7 +154,7 @@ def fetch_value_metrics(api_key, ticker_code):
         status_text.empty()
         return None, None, f"오류: {e}"
 
-# 4. 차트 함수 (선 긋기 로직 수정됨)
+# 4. 차트 함수
 def draw_chart(ticker, period, title, unit, current_price=None, target_min=None, target_max=None, target_buy=None):
     try:
         interval = "1d" if period == "3mo" else "1wk"
@@ -169,12 +164,12 @@ def draw_chart(ticker, period, title, unit, current_price=None, target_min=None,
         
         fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name=title)])
         
-        # 현재가 (항상 표시)
+        # 현재가 (값이 있을 때만 표시)
         if current_price and current_price > 0:
             fig.add_hline(y=current_price, line_dash="dot", line_color="#FF4081", line_width=1)
             fig.add_annotation(xref="paper", x=0.5, y=current_price, text=f"<b>현재가 {unit}{current_price:,.0f}</b>", showarrow=False, xanchor="center", yshift=10, font=dict(color="white", size=14), bgcolor="#FF4081", bordercolor="white", borderwidth=1, opacity=0.9)
 
-        # [수정] 아래 타겟 가격들은 값이 넘어올 때만 그립니다 (5년 차트용)
+        # 타겟 가격 (값이 있을 때만 표시)
         if target_buy and target_buy > 0:
             fig.add_hline(y=target_buy, line_width=2, line_color="#FFFFFF", opacity=1.0)
             fig.add_annotation(xref="paper", x=0.5, y=target_buy, text=f"<b>⚡ 매수 {unit}{target_buy:,.0f}</b>", showarrow=False, yshift=0, xanchor="center", font=dict(color="black", size=14), bgcolor="#FFFFFF", bordercolor="gray", borderwidth=1, opacity=0.9)
@@ -224,7 +219,6 @@ if df_sheet is not None:
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
-        # 구글 시트 값 (콤마 제거 안전 로딩)
         try:
             def clean_val(v):
                 try: return float(str(v).replace(',', ''))
@@ -272,11 +266,17 @@ if df_sheet is not None:
 
             st.write("---")
             col1, col2 = st.columns(2)
-            # [수정] 3개월 차트에는 targets를 안 넣거나 None으로 전달
-            with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
             
-            # [수정] 5년 차트에만 targets 전달
-            with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, current_price=current_p, target_min=t_min, target_max=t_max, target_buy=t_buy)
+            # [수정됨]
+            # 3개월 차트: 현재가(current_p)만 넣고 나머지는 안 넣음
+            with col1: 
+                draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
+            
+            # 5년 차트: 현재가(current_price)를 None으로 줘서 뺌. 나머지 타겟 가격은 넣음
+            with col2: 
+                draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, 
+                           current_price=None, # <--- 현재가 표시 제거!
+                           target_min=t_min, target_max=t_max, target_buy=t_buy)
             
             st.subheader("📌 핵심 요약 (메모)")
             st.info(s_info.get('메모', '메모 없음'))
