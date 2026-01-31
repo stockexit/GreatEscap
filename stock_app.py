@@ -47,7 +47,7 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # [수정] 중앙 정렬 + 글씨 크기(size=16) + Y축 눈금 크기 확대
+        # 중앙 정렬 + 글씨 크기(size=16) + Y축 눈금 크기 확대
         
         # 1. 매수 가치 (흰색 실선)
         if target_buy and target_buy > 0:
@@ -59,7 +59,7 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
                 showarrow=False, 
                 yshift=0, 
                 xanchor="center",    
-                font=dict(color="black", size=16), # [변경] 라벨 글씨 16px
+                font=dict(color="black", size=16),
                 bgcolor="#FFFFFF",
                 bordercolor="gray", borderwidth=1, opacity=0.9
             )
@@ -74,7 +74,7 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
                 showarrow=False, 
                 yshift=-25,          
                 xanchor="center", 
-                font=dict(color="white", size=16), # [변경] 라벨 글씨 16px
+                font=dict(color="white", size=16),
                 bgcolor="#00C853", bordercolor="white", borderwidth=1, opacity=0.9
             )
 
@@ -88,24 +88,16 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
                 showarrow=False, 
                 yshift=25,           
                 xanchor="center", 
-                font=dict(color="white", size=16), # [변경] 라벨 글씨 16px
+                font=dict(color="white", size=16),
                 bgcolor="#FF3D00", bordercolor="white", borderwidth=1, opacity=0.9
             )
         
         fig.update_layout(
-            title=dict(text=f"{title} ({unit})", font=dict(size=20)), # 제목도 살짝 키움
+            title=dict(text=f"{title} ({unit})", font=dict(size=20)), 
             height=450, template="plotly_dark", margin=dict(l=10, r=10, b=10, t=50),
             xaxis_rangeslider_visible=False,
-            
-            # [변경] 축 설정: 움직임 잠금 + 글씨 크기 확대
-            xaxis=dict(
-                fixedrange=True,
-                tickfont=dict(size=12) # 날짜 글씨 크기
-            ), 
-            yaxis=dict(
-                fixedrange=True,
-                tickfont=dict(size=14) # [핵심] 오른쪽 가격 눈금 크기 확대 (14px)
-            )
+            xaxis=dict(fixedrange=True, tickfont=dict(size=12)), 
+            yaxis=dict(fixedrange=True, tickfont=dict(size=14))
         )
         
         config = {'displayModeBar': False, 'scrollZoom': False}
@@ -211,21 +203,41 @@ if df_sheet is not None:
         st.write("---")
 
         col1, col2 = st.columns(2)
-        # 3개월 차트
         with col1:
             draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
-            
-        # 5년 차트
         with col2:
             draw_chart(ticker_code, "5y", "🏛️ 5년 장기 + 가치 평가", unit, t_min, t_max, t_buy)
 
         st.write("---")
         
-        st.subheader("💡 투자 포인트 및 메모")
-        memo_content = s_info.get('메모', '작성된 메모가 없습니다.')
-        if pd.isna(memo_content):
-            memo_content = "작성된 메모가 없습니다."
-        st.info(memo_content)
+        # --- [업그레이드] 투자 포인트 및 메모 섹션 ---
+        st.subheader("💡 투자 포인트 & 리서치 노트")
+        
+        # 1. 외부 노트 링크 버튼 (노션/구글닥스 등)
+        note_link = s_info.get('노트링크', None)
+        if note_link and str(note_link).startswith('http'):
+            st.link_button("📝 심층 리포트(Notion/Docs) 보러가기", note_link)
+        
+        # 2. 이미지 및 텍스트 레이아웃
+        m_col1, m_col2 = st.columns([1, 2]) # 이미지는 작게, 글은 넓게
+        
+        # 이미지 표시 (이미지URL 컬럼이 있을 경우)
+        img_url = s_info.get('이미지URL', None)
+        with m_col1:
+            if img_url and str(img_url).startswith('http'):
+                st.image(img_url, caption=f"{selected} 참고 이미지", use_container_width=True)
+            else:
+                # 이미지가 없으면 빈 공간 대신 간단한 아이콘 표시 가능
+                st.markdown(" ") 
+
+        # 텍스트 표시 (마크다운 지원)
+        with m_col2:
+            memo_content = s_info.get('메모', '작성된 메모가 없습니다.')
+            if pd.isna(memo_content):
+                memo_content = "작성된 메모가 없습니다."
+            
+            # 마크다운으로 렌더링 (굵은글씨, 리스트 등 사용 가능)
+            st.markdown(memo_content)
         
     else:
         st.warning("선택한 시장에 해당하는 종목이 없습니다.")
