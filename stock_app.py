@@ -41,7 +41,7 @@ def load_data():
         return None
 
 # ---------------------------------------------------------
-# [핵심 로직] 이익 & EPS 추출 후 주식수 역산 (에러 방지 강화판)
+# [핵심 로직] 이익 & EPS 추출 (초강력 버전)
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False) 
 def fetch_value_metrics(api_key, ticker_code):
@@ -62,27 +62,28 @@ def fetch_value_metrics(api_key, ticker_code):
     try:
         for year in years:
             status_text.text(f"🔍 {year}년 실적 데이터 정밀 분석 중...")
+            df = None
             try:
                 # 11011: 사업보고서 (연간)
                 df = dart.finstate(ticker_code, year, reprt_code='11011')
             except:
-                df = None
+                pass # 없으면 패스
 
-            # [수정 1] 데이터가 있고, 'account_nm' 컬럼이 진짜로 있는지 확인 (에러 원인 차단)
+            # [수정] 데이터가 있고, 컬럼도 온전한지 체크
             if df is not None and not df.empty and 'account_nm' in df.columns:
                 
-                # --- 1. 당기순이익 찾기 (검색어 확장) ---
-                # '당기순이익' 또는 '당기순손익'이 포함된 것 중, 연결/지배/포괄 등의 키워드 정리
-                mask_net = df['account_nm'].str.contains('당기순이익|당기순손익', na=False) & \
-                           ~df['account_nm'].str.contains('포괄', na=False) & \
-                           ~df['account_nm'].str.contains('비지배', na=False)
-                
-                # --- 2. EPS 찾기 (검색어 대폭 완화) ---
-                # '기본'과 '주당'이 들어간 거면 다 찾음 (보통주 기준)
-                mask_eps = df['account_nm'].str.contains('주당', na=False) & \
-                           df['account_nm'].str.contains('기본', na=False)
+                # [수정] 공백 제거 후 검색 (띄어쓰기 때문에 못 찾는 경우 방지)
+                # 예: "기본 주당 이익" -> "기본주당이익"
+                df['account_clean'] = df['account_nm'].astype(str).str.replace(' ', '')
 
-                # 연결(CFS) 데이터를 우선적으로 찾고, 없으면 별도(OFS)를 찾음
+                # 1. 당기순이익 찾기 (지배주주 우선)
+                # '당기순이익' 글자가 있고, '포괄'은 없고
+                mask_net = df['account_clean'].str.contains('당기순이익') & ~df['account_clean'].str.contains('포괄')
+                
+                # 2. EPS 찾기 (기본 + 주당)
+                mask_eps = df['account_clean'].str.contains('기본') & df['account_clean'].str.contains('주당')
+
+                # 연결(CFS) 우선
                 target_df = df[df['fs_div'] == 'CFS']
                 if target_df.empty:
                     target_df = df[df['fs_div'] == 'OFS']
@@ -92,8 +93,8 @@ def fetch_value_metrics(api_key, ticker_code):
                     rows_net = target_df[mask_net]
                     net_income = 0
                     
-                    # '지배기업소유주지분'이 있으면 그걸 최우선으로 씀 (가장 정확함)
-                    row_controlling = rows_net[rows_net['account_nm'].str.contains('지배', na=False)]
+                    # 지배기업소유주지분 순이익이 있으면 그걸 씀 (가장 정확)
+                    row_controlling = rows_net[rows_net['account_clean'].str.contains('지배')]
                     if not row_controlling.empty:
                         target_row = row_controlling.iloc[0]
                     elif not rows_net.empty:
@@ -109,8 +110,8 @@ def fetch_value_metrics(api_key, ticker_code):
                     rows_eps = target_df[mask_eps]
                     eps = 0
                     if not rows_eps.empty:
-                        # 보통주/우선주 중 '보통주'가 있으면 우선 선택, 없으면 첫번째 것
-                        row_common = rows_eps[~rows_eps['account_nm'].str.contains('우선', na=False)]
+                        # 보통주 우선
+                        row_common = rows_eps[~rows_eps['account_clean'].str.contains('우선')]
                         if not row_common.empty:
                             eps_row = row_common.iloc[0]
                         else:
@@ -119,12 +120,11 @@ def fetch_value_metrics(api_key, ticker_code):
                         try: eps = float(str(eps_row['thstrm_amount']).replace(',', ''))
                         except: pass
                     
-                    # (3) 주식수 역산 (EPS가 0이 아니어야 함)
+                    # (3) 주식수 역산
                     shares = 0
                     if eps != 0:
                         shares = net_income / eps
 
-                    # 데이터가 하나라도 있으면 저장
                     if net_income != 0 or eps != 0:
                         result_data.append({
                             '연도': str(year),
@@ -148,19 +148,19 @@ def fetch_value_metrics(api_key, ticker_code):
             # 표 포맷팅
             view_cols = ['연도', '당기순이익(억)', 'EPS(원)', '유통주식수(만주)']
             df_view = df_final[view_cols].set_index('연도').T
-            cols = sorted(df_view.columns, reverse=True) # 최신순 정렬
+            cols = sorted(df_view.columns, reverse=True) 
             df_view = df_view[cols]
             
             return df_view, df_final, "OK"
         else:
-            return None, None, "DART에서 재무 데이터를 찾지 못했습니다."
+            return None, None, "DART 데이터 없음"
 
     except Exception as e:
         status_text.empty()
-        return None, None, f"시스템 오류 발생: {e}"
+        return None, None, f"오류: {e}"
 
-# 4. 차트 함수 (복구 완료)
-def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, target_buy=None, current_price=None):
+# 4. 차트 함수 (선 긋기 로직 수정됨)
+def draw_chart(ticker, period, title, unit, current_price=None, target_min=None, target_max=None, target_buy=None):
     try:
         interval = "1d" if period == "3mo" else "1wk"
         df = yf.download(ticker, period=period, interval=interval)
@@ -169,10 +169,12 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
         
         fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name=title)])
         
+        # 현재가 (항상 표시)
         if current_price and current_price > 0:
             fig.add_hline(y=current_price, line_dash="dot", line_color="#FF4081", line_width=1)
             fig.add_annotation(xref="paper", x=0.5, y=current_price, text=f"<b>현재가 {unit}{current_price:,.0f}</b>", showarrow=False, xanchor="center", yshift=10, font=dict(color="white", size=14), bgcolor="#FF4081", bordercolor="white", borderwidth=1, opacity=0.9)
 
+        # [수정] 아래 타겟 가격들은 값이 넘어올 때만 그립니다 (5년 차트용)
         if target_buy and target_buy > 0:
             fig.add_hline(y=target_buy, line_width=2, line_color="#FFFFFF", opacity=1.0)
             fig.add_annotation(xref="paper", x=0.5, y=target_buy, text=f"<b>⚡ 매수 {unit}{target_buy:,.0f}</b>", showarrow=False, yshift=0, xanchor="center", font=dict(color="black", size=14), bgcolor="#FFFFFF", bordercolor="gray", borderwidth=1, opacity=0.9)
@@ -222,7 +224,7 @@ if df_sheet is not None:
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
-        # 구글 시트 값 안전하게 로딩
+        # 구글 시트 값 (콤마 제거 안전 로딩)
         try:
             def clean_val(v):
                 try: return float(str(v).replace(',', ''))
@@ -270,8 +272,11 @@ if df_sheet is not None:
 
             st.write("---")
             col1, col2 = st.columns(2)
-            with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, t_min, t_max, t_buy, current_p)
-            with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, t_min, t_max, t_buy)
+            # [수정] 3개월 차트에는 targets를 안 넣거나 None으로 전달
+            with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
+            
+            # [수정] 5년 차트에만 targets 전달
+            with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, current_price=current_p, target_min=t_min, target_max=t_max, target_buy=t_buy)
             
             st.subheader("📌 핵심 요약 (메모)")
             st.info(s_info.get('메모', '메모 없음'))
