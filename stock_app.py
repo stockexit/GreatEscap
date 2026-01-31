@@ -158,7 +158,7 @@ if df_sheet is not None:
             st.error(f"데이터 불러오기 오류: {e}")
 
         # --- 메인 화면 구성 ---
-        st.title(f"🚀 {selected} ({ticker_code}) 기업가치")
+        st.title(f"🚀 {selected} ({ticker_code}) 기업 가치")
         
         # 3단 지표
         c1, c2, c3 = st.columns(3)
