@@ -4,42 +4,46 @@ import pandas as pd
 import plotly.graph_objects as go
 import ssl
 
-# 1. 화면 설정 (한국 시장 우선, 메뉴 상시 오픈)
+# 1. 화면 설정 (와이드 모드)
 st.set_page_config(
     page_title="사장님 투자 터미널", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
 
-# 2. SSL 에러 방지 (로컬 실행 시 필수)
+# 2. SSL 에러 방지
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # --------------------------------------------------------------------
-# 📌 [추가된 부분] CSS 스타일 주입 (폰트 크기 강제 확대)
+# 📌 [수정됨] CSS 스타일: 제목과 숫자를 아주 크게 확대
 # --------------------------------------------------------------------
 st.markdown("""
     <style>
-    /* 메트릭 라벨 (제목) */
+    /* 1. 메트릭 라벨 (제목: 실시간 현재가 등) */
     [data-testid="stMetricLabel"] {
-        font-size: 20px !important;
-        font-weight: bold !important;
-        color: #aaaaaa !important;
+        font-size: 30px !important;      /* 글씨 크기 대폭 확대 */
+        font-weight: 900 !important;     /* 아주 굵게 */
+        color: #ffffff !important;       /* 완전 흰색으로 잘 보이게 */
+        margin-bottom: 10px !important;  /* 숫자와의 간격 벌리기 */
     }
-    /* 메트릭 값 (숫자) */
+    
+    /* 2. 메트릭 값 (숫자: 가격) */
     [data-testid="stMetricValue"] {
-        font-size: 36px !important;
+        font-size: 55px !important;      /* 숫자도 비율에 맞춰 초대형으로 */
         font-weight: 700 !important;
+        padding-top: 5px !important;
     }
-    /* 메트릭 델타 (퍼센트) */
+    
+    /* 3. 메트릭 델타 (퍼센트) */
     [data-testid="stMetricDelta"] {
-        font-size: 18px !important;
+        font-size: 22px !important;
         font-weight: bold !important;
     }
     </style>
     """, unsafe_allow_html=True)
 # --------------------------------------------------------------------
 
-# 3. 데이터 로딩 및 시장 자동 분류
+# 3. 데이터 로딩
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -55,7 +59,7 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수 (줌/팬 잠금 + 목표가 2줄 표시)
+# 4. 차트 그리기 함수 (고정형 + 2줄 표시)
 def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
     try:
         interval = "1d" if period == "3mo" else "1wk"
@@ -72,7 +76,7 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # --- [1] 보수적 적정가 ---
+        # [1] 보수적 적정가
         if target_min and target_min > 0:
             fig.add_hline(y=target_min, line_dash="dot", line_color="#00C853", opacity=0.8)
             fig.add_annotation(
@@ -83,7 +87,7 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
                 bgcolor="#00C853", bordercolor="white", borderwidth=1, opacity=0.9
             )
 
-        # --- [2] 최대 미래가치 ---
+        # [2] 최대 미래가치
         if target_max and target_max > 0:
             fig.add_hline(y=target_max, line_dash="dash", line_color="#FF3D00", opacity=0.8)
             fig.add_annotation(
@@ -94,7 +98,7 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
                 bgcolor="#FF3D00", bordercolor="white", borderwidth=1, opacity=0.9
             )
         
-        # 차트 고정 (줌/스크롤 방지)
+        # 차트 고정
         fig.update_layout(
             title=dict(text=f"{title} ({unit})", font=dict(size=18)),
             height=450, template="plotly_dark",
@@ -110,7 +114,7 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
     except Exception as e:
         return st.write(f"차트 로딩 중 에러: {e}")
 
-# 5. 메인 로직 실행
+# 5. 메인 로직
 df_sheet = load_data()
 
 if df_sheet is not None:
@@ -150,11 +154,11 @@ if df_sheet is not None:
 
         st.title(f"🚀 {selected} ({ticker_code}) Analysis")
         
-        # 상단 지표 (CSS 적용됨)
+        # 상단 지표
         c1, c2, c3 = st.columns(3)
         c1.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
-        c2.metric("🛡️ 보수적 적정가 (안전)", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
-        c3.metric("🚀 최대 미래가치 (목표)", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
+        c2.metric("🛡️ 보수적 적정가", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
+        c3.metric("🚀 최대 미래가치", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
 
         st.write("---")
 
