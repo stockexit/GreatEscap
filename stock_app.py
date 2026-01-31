@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components # [필수] iframe 사용을 위한 라이브러리
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
@@ -49,47 +50,34 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
         
         # 중앙 정렬 + 글씨 크기(size=16) + Y축 눈금 크기 확대
         
-        # 1. 매수 가치 (흰색 실선)
         if target_buy and target_buy > 0:
             fig.add_hline(y=target_buy, line_width=2, line_color="#FFFFFF", opacity=1.0)
             fig.add_annotation(
-                xref="paper", x=0.5, 
-                y=target_buy, 
+                xref="paper", x=0.5, y=target_buy, 
                 text=f"<b>⚡ 매수 {unit}{target_buy:,.0f}</b>", 
-                showarrow=False, 
-                yshift=0, 
-                xanchor="center",    
-                font=dict(color="black", size=16),
-                bgcolor="#FFFFFF",
+                showarrow=False, yshift=0, xanchor="center",    
+                font=dict(color="black", size=16), bgcolor="#FFFFFF",
                 bordercolor="gray", borderwidth=1, opacity=0.9
             )
 
-        # 2. 보수적 적정가 (초록 점선)
         if target_min and target_min > 0:
             fig.add_hline(y=target_min, line_dash="dot", line_color="#00C853", opacity=0.8)
             fig.add_annotation(
-                xref="paper", x=0.5, 
-                y=target_min, 
+                xref="paper", x=0.5, y=target_min, 
                 text=f"<b>🛡️ 보수 {unit}{target_min:,.0f}</b>", 
-                showarrow=False, 
-                yshift=-25,          
-                xanchor="center", 
-                font=dict(color="white", size=16),
-                bgcolor="#00C853", bordercolor="white", borderwidth=1, opacity=0.9
+                showarrow=False, yshift=-25, xanchor="center", 
+                font=dict(color="white", size=16), bgcolor="#00C853", 
+                bordercolor="white", borderwidth=1, opacity=0.9
             )
 
-        # 3. 최대 미래가치 (빨강 파선)
         if target_max and target_max > 0:
             fig.add_hline(y=target_max, line_dash="dash", line_color="#FF3D00", opacity=0.8)
             fig.add_annotation(
-                xref="paper", x=0.5, 
-                y=target_max, 
+                xref="paper", x=0.5, y=target_max, 
                 text=f"<b>🚀 최대 {unit}{target_max:,.0f}</b>", 
-                showarrow=False, 
-                yshift=25,           
-                xanchor="center", 
-                font=dict(color="white", size=16),
-                bgcolor="#FF3D00", bordercolor="white", borderwidth=1, opacity=0.9
+                showarrow=False, yshift=25, xanchor="center", 
+                font=dict(color="white", size=16), bgcolor="#FF3D00", 
+                bordercolor="white", borderwidth=1, opacity=0.9
             )
         
         fig.update_layout(
@@ -127,9 +115,7 @@ if df_sheet is not None:
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
-        # --- 투자 등급 설정 ---
         grade = s_info.get('투자등급', '미분류') 
-        
         if grade == "코어":
             badge_color = "#2962FF"
             badge_icon = "💎"
@@ -152,7 +138,6 @@ if df_sheet is not None:
             history = ticker_obj.history(period="1d")
             current_p = history['Close'].iloc[-1] if not history.empty else 0
 
-            # 가격 정보
             t_min = float(s_info.get('보수적적정가', 0))
             t_max = float(s_info.get('최대미래가치', 0))
             t_buy = float(s_info.get('매수가치', 0))
@@ -172,31 +157,17 @@ if df_sheet is not None:
         st.title(f"🚀 {selected} ({ticker_code}) 기업 가치")
         
         c1, c2, c3, c4 = st.columns(4)
-        
         with c1:
             st.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
             st.markdown(f"""
-                <div style="
-                    background-color: {badge_color};
-                    padding: 5px 10px;
-                    border-radius: 5px;
-                    color: white;
-                    font-weight: bold;
-                    text-align: center;
-                    display: inline-block;
-                    margin-top: -15px;
-                    font-size: 0.9em;
-                ">
+                <div style="background-color: {badge_color}; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; text-align: center; display: inline-block; margin-top: -15px; font-size: 0.9em;">
                     {badge_icon} {badge_text}
                 </div>
             """, unsafe_allow_html=True)
-
         with c2:
             st.metric("⚡ 매수 가치 (안전마진)", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
-
         with c3:
             st.metric("🛡️ 보수적 적정가 (안전)", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
-        
         with c4:
             st.metric("🚀 최대 미래가치 (목표)", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
 
@@ -210,34 +181,46 @@ if df_sheet is not None:
 
         st.write("---")
         
-        # --- [업그레이드] 투자 포인트 및 메모 섹션 ---
-        st.subheader("💡 투자 포인트 & 리서치 노트")
+        # --- [NEW] 구글 문서 임베딩 & 메모 섹션 ---
+        st.subheader("💡 투자 포인트 & 심층 리포트")
         
-        # 1. 외부 노트 링크 버튼 (노션/구글닥스 등)
         note_link = s_info.get('노트링크', None)
-        if note_link and str(note_link).startswith('http'):
-            st.link_button("📝 심층 리포트(Notion/Docs) 보러가기", note_link)
-        
-        # 2. 이미지 및 텍스트 레이아웃
-        m_col1, m_col2 = st.columns([1, 2]) # 이미지는 작게, 글은 넓게
-        
-        # 이미지 표시 (이미지URL 컬럼이 있을 경우)
-        img_url = s_info.get('이미지URL', None)
-        with m_col1:
-            if img_url and str(img_url).startswith('http'):
-                st.image(img_url, caption=f"{selected} 참고 이미지", use_container_width=True)
-            else:
-                # 이미지가 없으면 빈 공간 대신 간단한 아이콘 표시 가능
-                st.markdown(" ") 
+        memo_content = s_info.get('메모', '작성된 메모가 없습니다.')
+        if pd.isna(memo_content):
+            memo_content = "작성된 메모가 없습니다."
 
-        # 텍스트 표시 (마크다운 지원)
-        with m_col2:
-            memo_content = s_info.get('메모', '작성된 메모가 없습니다.')
-            if pd.isna(memo_content):
-                memo_content = "작성된 메모가 없습니다."
+        # 1. 구글 문서가 있다면 -> 화면에 직접 띄우기 (임베딩)
+        if note_link and "docs.google.com" in str(note_link):
+            st.success(f"📄 **{selected}** 구글 문서 리포트가 연결되었습니다.")
             
-            # 마크다운으로 렌더링 (굵은글씨, 리스트 등 사용 가능)
-            st.markdown(memo_content)
+            # 구글 문서를 '미리보기 모드(/preview)'로 변환해야 깔끔하게 보임
+            if "/edit" in note_link:
+                preview_link = note_link.split("/edit")[0] + "/preview"
+            else:
+                preview_link = note_link
+
+            # iframe으로 문서 표시 (높이 800px로 넉넉하게)
+            components.iframe(preview_link, height=800, scrolling=True)
+            
+            # 3줄 요약 메모는 문서 위에 살짝 보여주기
+            with st.expander("📌 3줄 요약 메모 보기 (클릭)", expanded=False):
+                st.markdown(memo_content)
+
+        # 2. 구글 문서가 없다면 -> 기존 방식 (이미지 + 텍스트)
+        else:
+            m_col1, m_col2 = st.columns([1, 2])
+            
+            img_url = s_info.get('이미지URL', None)
+            with m_col1:
+                if img_url and str(img_url).startswith('http'):
+                    st.image(img_url, caption=f"{selected} 참고 이미지", use_container_width=True)
+                else:
+                    st.info("이미지 URL이 없습니다.") 
+
+            with m_col2:
+                st.markdown(memo_content)
+                if note_link and str(note_link).startswith('http'):
+                     st.link_button("🔗 외부 링크 열기 (Notion 등)", note_link)
         
     else:
         st.warning("선택한 시장에 해당하는 종목이 없습니다.")
