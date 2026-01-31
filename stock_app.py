@@ -47,15 +47,16 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # [NEW] 매수 가치 (노란색 실선)
+        # [NEW] 매수 가치 (흰색 실선으로 변경)
         if target_buy and target_buy > 0:
-            fig.add_hline(y=target_buy, line_width=2, line_color="#FFD600", opacity=1.0)
+            fig.add_hline(y=target_buy, line_width=2, line_color="#FFFFFF", opacity=1.0)
             fig.add_annotation(
                 x=df.index[-1], y=target_buy, 
                 text=f"<b>⚡ 매수 {unit}{target_buy:,.0f}</b>", 
                 showarrow=False, yshift=0, xshift=50, 
-                font=dict(color="black", size=12),
-                bgcolor="#FFD600", bordercolor="white", borderwidth=1, opacity=0.9
+                font=dict(color="black", size=12),    # 흰 배경엔 검은 글씨가 잘 보임
+                bgcolor="#FFFFFF",                    # 흰색 배경
+                bordercolor="gray", borderwidth=1, opacity=0.9
             )
 
         # 보수적 적정가 (초록 점선)
@@ -122,7 +123,7 @@ if df_sheet is not None:
             badge_icon = "🛰️"
             badge_text = "SATELLITE"
         elif grade == "시가존":
-            badge_color = "#2E7D32" 
+            badge_color = "#2E7D32"  # 초록색 배경
             badge_icon = "🚬"
             badge_text = "시가존"
         else:
@@ -174,8 +175,9 @@ if df_sheet is not None:
                 </div>
             """, unsafe_allow_html=True)
 
+        # [변경] 텍스트 수정: (진입) -> (안전마진)
         with c2:
-            st.metric("⚡ 매수 가치 (진입)", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
+            st.metric("⚡ 매수 가치 (안전마진)", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
 
         with c3:
             st.metric("🛡️ 보수적 적정가 (안전)", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
@@ -186,11 +188,11 @@ if df_sheet is not None:
         st.write("---")
 
         col1, col2 = st.columns(2)
-        # [수정] 3개월 차트에는 target_buy를 넣지 않음
+        # 3개월 차트: 매수선 없음
         with col1:
             draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
             
-        # 5년 차트에는 모든 지표 포함
+        # 5년 차트: 모든 지표 포함 (흰색 매수선 적용됨)
         with col2:
             draw_chart(ticker_code, "5y", "🏛️ 5년 장기 + 가치 평가", unit, t_min, t_max, t_buy)
 
