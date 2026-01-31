@@ -30,7 +30,7 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수 (매수가치 인자 추가됨)
+# 4. 차트 그리기 함수
 def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, target_buy=None):
     try:
         interval = "1d" if period == "3mo" else "1wk"
@@ -47,14 +47,14 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # [NEW] 매수 가치 (노란색 실선 - 눈에 띄게)
+        # [NEW] 매수 가치 (노란색 실선)
         if target_buy and target_buy > 0:
             fig.add_hline(y=target_buy, line_width=2, line_color="#FFD600", opacity=1.0)
             fig.add_annotation(
                 x=df.index[-1], y=target_buy, 
                 text=f"<b>⚡ 매수 {unit}{target_buy:,.0f}</b>", 
-                showarrow=False, yshift=0, xshift=50, # 텍스트 위치 조정
-                font=dict(color="black", size=12),    # 노란 배경엔 검은 글씨가 잘 보임
+                showarrow=False, yshift=0, xshift=50, 
+                font=dict(color="black", size=12),
                 bgcolor="#FFD600", bordercolor="white", borderwidth=1, opacity=0.9
             )
 
@@ -122,7 +122,7 @@ if df_sheet is not None:
             badge_icon = "🛰️"
             badge_text = "SATELLITE"
         elif grade == "시가존":
-            badge_color = "#2E7D32"  # 초록색 배경
+            badge_color = "#2E7D32" 
             badge_icon = "🚬"
             badge_text = "시가존"
         else:
@@ -135,10 +135,10 @@ if df_sheet is not None:
             history = ticker_obj.history(period="1d")
             current_p = history['Close'].iloc[-1] if not history.empty else 0
 
-            # 가격 정보 가져오기 (컬럼 없으면 0 처리)
+            # 가격 정보
             t_min = float(s_info.get('보수적적정가', 0))
             t_max = float(s_info.get('최대미래가치', 0))
-            t_buy = float(s_info.get('매수가치', 0)) # [NEW] 매수 가치
+            t_buy = float(s_info.get('매수가치', 0))
             
             if current_p > 0:
                 gap_min = ((t_min - current_p) / current_p) * 100
@@ -154,7 +154,6 @@ if df_sheet is not None:
 
         st.title(f"🚀 {selected} ({ticker_code}) 기업 가치")
         
-        # [NEW] 컬럼을 4개로 늘려서 '매수 가치' 표시
         c1, c2, c3, c4 = st.columns(4)
         
         with c1:
@@ -175,7 +174,6 @@ if df_sheet is not None:
                 </div>
             """, unsafe_allow_html=True)
 
-        # [NEW] 매수 가치 섹션 (노란색 강조)
         with c2:
             st.metric("⚡ 매수 가치 (진입)", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
 
@@ -187,10 +185,12 @@ if df_sheet is not None:
 
         st.write("---")
 
-        # 차트 그리기 (t_buy 추가 전달)
         col1, col2 = st.columns(2)
+        # [수정] 3개월 차트에는 target_buy를 넣지 않음
         with col1:
-            draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit, target_buy=t_buy)
+            draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
+            
+        # 5년 차트에는 모든 지표 포함
         with col2:
             draw_chart(ticker_code, "5y", "🏛️ 5년 장기 + 가치 평가", unit, t_min, t_max, t_buy)
 
