@@ -57,7 +57,7 @@ def draw_chart(ticker, period, title, unit, target_p=None):
             fig.add_annotation(
                 x=df.index[-1], y=target_p,
                 # 1. <b> 태그로 텍스트 굵게 처리
-                text=f"<b>🎯 {unit}{target_p:,.0f}</b>", 
+                text=f"<b>{unit}{target_p:,.0f}</b>", 
                 showarrow=False, 
                 yshift=15, # 선과 간격을 조금 더 띄움
                 # 2. 폰트 크기 키움 (12 -> 15)
