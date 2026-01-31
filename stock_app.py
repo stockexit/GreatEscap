@@ -65,8 +65,6 @@ def fetch_shares_history(ticker_code):
         df_price = stock.get_market_ohlcv_by_date(start_date, end_date, ticker_code, adjusted=True)
         
         # 4. 데이터 병합 (날짜 기준)
-        # 시가총액과 수정주가를 합칩니다.
-        # df_cap에는 '시가총액', df_price에는 '종가'(수정주가)가 있습니다.
         df_merged = pd.concat([df_cap['시가총액'], df_price['종가']], axis=1)
         df_merged.columns = ['시가총액', '수정주가']
         
@@ -127,7 +125,7 @@ def fetch_core_financials(api_key, ticker_code):
                 mask_op = df['account_clean'].str.contains('영업이익') & \
                           ~df['account_clean'].str.contains('기타|금융|관계|지분')
                 
-                # C. 당기순이익 (EPS 계산의 핵심 분자)
+                # C. 당기순이익
                 mask_net = df['account_clean'].str.contains('당기순이익') & \
                            ~df['account_clean'].str.contains('포괄') & \
                            ~df['account_clean'].str.contains('비지배')
@@ -171,10 +169,10 @@ def fetch_core_financials(api_key, ticker_code):
         status_text.empty()
 
         if result_data:
-            # 1. DART 데이터 (매출, 영업이익, 순이익)
+            # 1. DART 데이터
             df_dart = pd.DataFrame(result_data)
             
-            # 2. KRX 데이터 (수정 상장주식수 - 액면분할 보정됨)
+            # 2. KRX 데이터 (수정 상장주식수)
             df_shares = fetch_shares_history(ticker_code)
             
             # 3. 병합
@@ -186,7 +184,7 @@ def fetch_core_financials(api_key, ticker_code):
             
             df_final = df_final.sort_values('연도', ascending=False)
             
-            # 4. [보정 EPS 계산] 순이익 / 수정주식수
+            # 4. [보정 EPS 계산]
             def calc_eps(row):
                 try:
                     income = row['순이익']
@@ -355,6 +353,20 @@ if df_sheet is not None:
                     display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
                 
                 if display_df is not None:
+                    # -----------------------------------------------------
+                    # [신규 추가] 10년 평균 EPS 계산 및 표시
+                    # -----------------------------------------------------
+                    eps_mean = raw_data['EPS(원)'].mean()
+                    
+                    # 지표 표시
+                    col_m1, col_m2, col_m3 = st.columns(3)
+                    with col_m1:
+                        st.metric("10년 평균 EPS", f"{eps_mean:,.0f}원")
+                    with col_m2:
+                        latest_eps = raw_data['EPS(원)'].iloc[0] # 최신 연도
+                        diff = latest_eps - eps_mean
+                        st.metric("최신 EPS vs 평균", f"{latest_eps:,.0f}원", f"{diff:,.0f}원 (차이)")
+                    
                     st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
                     
                     raw_data = raw_data.sort_values('연도')
@@ -380,6 +392,20 @@ if df_sheet is not None:
                         textposition="top center",
                         textfont=dict(color="white", size=11)
                     ), secondary_y=True)
+                    
+                    # -----------------------------------------------------
+                    # [신규 추가] 평균 EPS 라인 (주황색 점선)
+                    # -----------------------------------------------------
+                    fig.add_hline(
+                        y=eps_mean, 
+                        line_dash="dash", 
+                        line_color="#FFAB00", 
+                        line_width=2,
+                        secondary_y=True,
+                        annotation_text=f"평균: {eps_mean:,.0f}원", 
+                        annotation_position="top left",
+                        annotation_font_color="#FFAB00"
+                    )
                     
                     fig.update_layout(
                         title=f"{selected} 실적 성장 추이 (Bar: 억원 / Line: 원)", 
