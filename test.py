@@ -25,7 +25,7 @@ st.markdown("""
 sheet_url = "https://docs.google.com/spreadsheets/d/1FHEblKL20VNpqdhnGu2FK7UY4ueMS3JSEwiZUEqDtaw/edit?usp=sharing"
 url = sheet_url.split("/edit")[0] + "/export?format=csv"
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=10)
 def load_data(csv_url):
     try:
         df = pd.read_csv(csv_url)
