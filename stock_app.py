@@ -53,25 +53,4 @@ df_sheet = load_data()
 
 if df_sheet is not None:
     # 사이드바 설정
-    st.sidebar.markdown("## 🎯 분석 종목 리스트")
-    selected = st.sidebar.selectbox("종목 선택 👇", df_sheet['종목명'].unique())
-    s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
-    
-    # [보안 수술] 데이터 안전하게 긁어오기
-    try:
-        # 실시간 환율 데이터
-        ex_rate = yf.Ticker("USDKRW=X").history(period="1d")['Close'].iloc[-1]
-        
-        # 주식 및 뉴스 데이터 추출
-        ticker_obj = yf.Ticker(s_info['코드'])
-        current_p = ticker_obj.history(period="1d")['Close'].iloc[-1]
-        target_p = float(s_info['적정가'])
-        gap_percent = ((target_p - current_p) / current_p) * 100
-        
-        # 뉴스 데이터 가져오기 (이중 안전장치)
-        news_data = ticker_obj.news
-    except:
-        ex_rate, current_p, target_p, gap_percent, news_data = 1400, 0, 0, 0, []
-
-    # 메인 화면 구성
-    st.
+    st.sidebar.markdown("## 🎯
