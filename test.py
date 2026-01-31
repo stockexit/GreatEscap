@@ -102,4 +102,32 @@ def draw_chart(ticker, period, title):
     # 전체화면 아이콘을 살려서 확대 가능하게 설정
     return st.plotly_chart(fig, use_container_width=True, config={
         'displayModeBar': True,
-        'modeBarButtons
+        'modeBarButtonsToRemove': ['zoom', 'pan', 'select', 'lasso2d', 'zoomIn', 'zoomOut', 'autoScale', 'resetScale2d'],
+        'displaylogo': False
+    })
+
+# 6. 메인 화면: 2x2 고정 레이아웃
+st.markdown(f"#### 🚀 {selected_name} ({stock_info['코드']})")
+
+# 첫 번째 줄 (2개)
+row1_left, row1_right = st.columns(2)
+with row1_left:
+    draw_chart(stock_info['코드'], "1mo", "📅 1개월")
+with row1_right:
+    draw_chart(stock_info['코드'], "3mo", "📅 3개월")
+
+# 두 번째 줄 (2개)
+row2_left, row2_right = st.columns(2)
+with row2_left:
+    draw_chart(stock_info['코드'], "1y", "📅 1년")
+with row2_right:
+    draw_chart(stock_info['코드'], "max", "🏛️ 전체")
+
+st.write("---")
+
+# 7. 하단 가치평가 리포트
+c_a, c_b = st.columns([1, 2])
+with c_a:
+    st.metric("사장님 목표가", f"{stock_info['적정가']}")
+with c_b:
+    st.info(f"**💡 분석 메모:** {stock_info['메모']}")
