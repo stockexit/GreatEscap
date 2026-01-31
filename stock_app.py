@@ -28,8 +28,8 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수
-def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, target_buy=None):
+# 4. 차트 그리기 함수 (current_price 인자 추가됨)
+def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, target_buy=None, current_price=None):
     try:
         interval = "1d" if period == "3mo" else "1wk"
         df = yf.download(ticker, period=period, interval=interval)
@@ -45,7 +45,20 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # 라벨 설정
+        # --- [NEW] 현재가 라인 (3개월 차트용) ---
+        if current_price and current_price > 0:
+            fig.add_hline(y=current_price, line_dash="dot", line_color="#FF4081", line_width=1) # 분홍색 점선
+            fig.add_annotation(
+                xref="paper", x=0, y=current_price, # 왼쪽 끝
+                text=f"<b>Now {unit}{current_price:,.0f}</b>", 
+                showarrow=False, 
+                xanchor="left", xshift=5,
+                yshift=5, # 선 바로 위에 살짝
+                font=dict(color="#FF4081", size=12),
+                bgcolor="rgba(0,0,0,0.5)" # 반투명 배경
+            )
+
+        # --- 가치 평가 라인들 (5년 차트용) ---
         if target_buy and target_buy > 0:
             fig.add_hline(y=target_buy, line_width=2, line_color="#FFFFFF", opacity=1.0)
             fig.add_annotation(xref="paper", x=0.5, y=target_buy, text=f"<b>⚡ 매수 {unit}{target_buy:,.0f}</b>", showarrow=False, yshift=0, xanchor="center", font=dict(color="black", size=16), bgcolor="#FFFFFF", bordercolor="gray", borderwidth=1, opacity=0.9)
@@ -134,48 +147,37 @@ if df_sheet is not None:
 
         # 차트 출력
         col1, col2 = st.columns(2)
-        with col1: draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
-        with col2: draw_chart(ticker_code, "5y", "🏛️ 5년 장기 + 가치 평가", unit, t_min, t_max, t_buy)
+        with col1: 
+            # [변경] 3개월 차트에 current_price 전달
+            draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit, current_price=current_p)
+        with col2: 
+            draw_chart(ticker_code, "5y", "🏛️ 5년 장기 + 가치 평가", unit, t_min, t_max, t_buy)
 
         st.write("---")
         
-        # ==========================================
-        # [수정됨] 1. 간단 메모를 제일 위로 올림
-        # ==========================================
+        # 1. 간단 메모
         st.subheader("📌 핵심 요약 (메모)")
-        
         memo_content = s_info.get('메모', '작성된 메모가 없습니다.')
-        if pd.isna(memo_content):
-            memo_content = "작성된 메모가 없습니다."
-        
-        # 파란색 박스(info)로 강조해서 보여줌
+        if pd.isna(memo_content): memo_content = "작성된 메모가 없습니다."
         st.info(memo_content)
         
-        # ==========================================
-        # [수정됨] 2. 그 밑에 심층 리포트 (문서/이미지) 배치
-        # ==========================================
+        # 2. 심층 리포트
         st.subheader("💡 심층 분석 리포트")
-        
         note_link = s_info.get('노트링크', None)
         img_url = s_info.get('이미지URL', None)
 
-        # 2-1. 구글 문서가 있는 경우 (최우선 표시)
         if note_link and "docs.google.com" in str(note_link):
             if "/edit" in note_link:
                 preview_link = note_link.split("/edit")[0] + "/preview"
             else:
                 preview_link = note_link
-
             st.success(f"📄 **{selected}** 리포트 원본")
             components.iframe(preview_link, height=800, scrolling=True)
 
-        # 2-2. 구글 문서가 없고, 이미지만 있는 경우
         elif img_url and str(img_url).startswith('http'):
             st.image(img_url, caption=f"{selected} 분석 이미지", use_container_width=True)
             if note_link and str(note_link).startswith('http'):
                  st.link_button("🔗 외부 링크 열기", note_link)
-                 
-        # 2-3. 둘 다 없는 경우
         else:
             st.markdown("등록된 심층 리포트(구글 문서)나 이미지가 없습니다.")
         
