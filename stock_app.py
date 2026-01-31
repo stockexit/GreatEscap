@@ -15,12 +15,23 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# [스타일] 표 디자인 (헤더 색상, 폰트 등)
+# [스타일] 네이버 증권 스타일 (깔끔한 헤더, 버튼)
 # ---------------------------------------------------------
 st.markdown("""
 <style>
+    /* 탭 스타일 */
     button[data-baseweb="tab"] div p { font-size: 18px !important; font-weight: bold !important; }
-    thead tr th { background-color: #f0f2f6 !important; color: #31333F !important; font-size: 15px !important; font-weight: bold !important; border-bottom: 2px solid #ccc !important;}
+    
+    /* 데이터프레임 헤더 스타일 (회색 배경) */
+    thead tr th { 
+        background-color: #f5f6f7 !important; 
+        color: #333333 !important; 
+        font-size: 14px !important; 
+        font-weight: bold !important; 
+        border-top: 2px solid #333 !important;
+        border-bottom: 1px solid #ccc !important;
+    }
+    /* 데이터 셀 스타일 */
     tbody tr td { font-size: 14px !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -43,35 +54,36 @@ def load_data():
         return None
 
 # ---------------------------------------------------------
-# [핵심 기능] 재무제표 순서 정렬기 (Sorting Helper)
+# [핵심] 재무제표 표준 순서 정렬기 (Sorting Engine)
 # ---------------------------------------------------------
 def sort_financial_accounts(df, report_type):
     """
-    뒤죽박죽 섞인 계정명을 표준 순서대로 정렬해주는 함수
+    뒤죽박죽 섞인 계정명을 네이버 증권 순서대로 정렬합니다.
     """
-    # 1. 우리가 원하는 순서 (우선순위 목록)
+    # 1. 표준 순서 정의 (우선순위)
     if '손익' in report_type or '포괄' in report_type:
         order_list = [
-            '매출액', '수익(매출액)', '영업수익', '매출',
+            '매출액', '수익(매출액)', '영업수익', 
             '매출원가', '영업비용',
             '매출총이익',
             '판매비와관리비', '판매비및관리비', '판관비',
             '영업이익', '영업이익(손실)',
-            '금융수익', '금융원가', '금융비용',
-            '기타수익', '기타비용', '기타영업외수익', '기타영업외비용',
-            '지분법이익', '관계기업투자이익',
+            '금융수익', '금융원가', '금융비용', '기타수익', '기타비용',
             '법인세비용차감전계속사업이익', '법인세차감전순이익',
             '법인세비용',
-            '중단영업이익',
             '당기순이익', '당기순이익(손실)',
             '지배기업소유주지분', '지배주주지분순이익',
             '비지배지분', '비지배주주지분순이익',
-            '총포괄손익', '총포괄이익'
+            '총포괄손익'
         ]
     elif '상태' in report_type: # 재무상태표
         order_list = [
-            '자산총계', '유동자산', '현금및현금성자산', '재고자산', '비유동자산', '유형자산', '무형자산',
-            '부채총계', '유동부채', '단기차입금', '비유동부채', '사채', '장기차입금',
+            '자산총계', 
+            '유동자산', '현금및현금성자산', '매출채권', '재고자산', 
+            '비유동자산', '유형자산', '무형자산',
+            '부채총계', 
+            '유동부채', '매입채무', '단기차입금', 
+            '비유동부채', '사채', '장기차입금',
             '자본총계', '지배기업소유주지분', '자본금', '이익잉여금'
         ]
     elif '현금' in report_type: # 현금흐름표
@@ -82,31 +94,26 @@ def sort_financial_accounts(df, report_type):
             '기초현금및현금성자산', '기말현금및현금성자산'
         ]
     else:
-        return df # 모르는 표는 그냥 둠
+        return df 
 
-    # 2. 정렬 로직 적용
-    # 데이터프레임의 인덱스(계정명)를 리스트 순서대로 다시 맞춤
-    # 리스트에 없는 항목은 맨 뒤로 보냄
-    
-    # 현재 데이터에 있는 계정명들
+    # 2. 정렬 실행
     current_index = df.index.tolist()
-    
-    # 순서 리스트에 있는 것 먼저 담기
     sorted_index = []
+    
+    # (1) 리스트에 있는 것 먼저 순서대로 담기
     for item in order_list:
         if item in current_index:
             sorted_index.append(item)
             
-    # 순서 리스트에 없는 나머지(기타 항목들) 담기
+    # (2) 리스트에 없는 나머지(기타 항목)는 맨 뒤에 붙이기
     for item in current_index:
         if item not in sorted_index:
             sorted_index.append(item)
             
-    # 재정렬 실행
     return df.reindex(sorted_index)
 
 
-# 4. DART 데이터 수집 함수
+# 4. DART 데이터 수집 함수 (필터 없이 원본 가져오기)
 @st.cache_data(show_spinner=False) 
 def fetch_all_financials(api_key, ticker_code):
     try:
@@ -118,7 +125,7 @@ def fetch_all_financials(api_key, ticker_code):
         return None, "DART 조회 불가"
 
     now_year = datetime.datetime.now().year 
-    # 최근 5년치 (필요하면 숫자 수정)
+    # 최근 5년치 (필요하면 늘리세요)
     years = range(now_year - 5, now_year + 1) 
     
     all_data_list = []
@@ -126,8 +133,9 @@ def fetch_all_financials(api_key, ticker_code):
     
     try:
         for year in years:
-            status_text.text(f"📅 {year}년도 데이터 원본 가져오는 중...")
+            status_text.text(f"📥 {year}년도 데이터 수집 중...")
             try:
+                # 11011: 사업보고서 (연간 확정)
                 df = dart.finstate(ticker_code, year, reprt_code='11011')
             except:
                 df = None
@@ -154,7 +162,6 @@ def fetch_all_financials(api_key, ticker_code):
                     return 0
             
             df_final['thstrm_amount'] = df_final['thstrm_amount'].apply(clean_number)
-            
             return df_final, "OK"
         else:
             return None, "데이터 없음"
@@ -226,7 +233,7 @@ if df_sheet is not None:
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
-        # 지표 및 등급
+        # 지표 계산
         t_min = float(s_info.get('보수적적정가', 0))
         t_max = float(s_info.get('최대미래가치', 0))
         t_buy = float(s_info.get('매수가치', 0))
@@ -252,8 +259,11 @@ if df_sheet is not None:
 
         st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
 
-        tab1, tab2 = st.tabs(["🚀 종목 대시보드", "📊 전체 재무제표 (원본)"])
+        tab1, tab2 = st.tabs(["🚀 종목 대시보드", "📊 재무 분석"])
 
+        # ----------------------------------------------
+        # [탭 1] 대시보드
+        # ----------------------------------------------
         with tab1:
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -283,31 +293,49 @@ if df_sheet is not None:
                 st.image(s_info.get('이미지URL'), use_container_width=True)
                 if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
 
+        # ----------------------------------------------
+        # [탭 2] 재무제표 (네이버 증권 스타일 UI)
+        # ----------------------------------------------
         with tab2:
             if not is_korea:
                 st.info("미국 주식은 지원하지 않습니다.")
             else:
                 DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
 
-                with st.spinner(f"DART에서 {selected}의 데이터를 가져와 정리 중입니다..."):
+                with st.spinner(f"📊 {selected} 재무 데이터 불러오는 중..."):
                     raw_df, msg = fetch_all_financials(DART_API_KEY, dart_code)
                 
                 if raw_df is not None:
-                    # 1. 컨트롤 패널
-                    col_sel1, col_sel2 = st.columns(2)
-                    with col_sel1:
-                        fs_options = raw_df['fs_div'].unique() 
-                        fs_map = {'CFS': '연결재무제표', 'OFS': '별도재무제표'}
-                        display_fs = [fs_map.get(x, x) for x in fs_options]
-                        choice_fs_display = st.selectbox("1. 연결/별도 선택", display_fs)
-                        choice_fs = [k for k, v in fs_map.items() if v == choice_fs_display][0] if choice_fs_display in fs_map.values() else choice_fs_display
+                    # --- [UI] 상단 컨트롤 패널 (가로 배치) ---
+                    col_ui1, col_ui2, col_ui3 = st.columns([1, 1, 2])
+                    
+                    with col_ui1:
+                        # 연결/별도 선택 (라디오 버튼을 가로로)
+                        fs_mode = st.radio("기준", ["연결", "별도"], horizontal=True, index=0)
+                        fs_code = 'CFS' if fs_mode == "연결" else 'OFS'
 
-                    with col_sel2:
+                    with col_ui2:
+                         # 기간 선택 (현재는 연간만 지원하지만 UI는 만들어둠)
+                        period_mode = st.radio("기간", ["연간", "분기"], horizontal=True, index=0)
+                        if period_mode == "분기":
+                            st.caption("⚠️ 현재 버전은 '연간' 데이터만 정확히 지원합니다.")
+
+                    with col_ui3:
+                        # 표 종류 선택
                         sj_options = raw_df['sj_nm'].unique()
-                        choice_sj = st.selectbox("2. 표 종류 선택", sj_options)
+                        # 기본값을 '손익계산서'로 잡기 위해 노력
+                        default_sj_idx = 0
+                        for i, opt in enumerate(sj_options):
+                            if '손익' in opt:
+                                default_sj_idx = i
+                                break
+                        selected_sj = st.selectbox("표 종류", sj_options, index=default_sj_idx)
 
-                    # 2. 필터링
-                    mask = (raw_df['fs_div'] == choice_fs) & (raw_df['sj_nm'] == choice_sj)
+                    st.markdown("---")
+
+                    # --- [데이터 처리] ---
+                    # 1. 필터링
+                    mask = (raw_df['fs_div'] == fs_code) & (raw_df['sj_nm'] == selected_sj)
                     filtered_df = raw_df[mask].copy()
                     
                     if not filtered_df.empty:
@@ -318,23 +346,22 @@ if df_sheet is not None:
                         pivot_df = pivot_df / 100000000
                         pivot_df = pivot_df.round(0)
                         
-                        # [핵심] 3. 정렬 로직 적용! (Sort)
-                        # (1) 열(Year) 정렬: 최신순 (내림차순)
+                        # 2. 열 정렬 (최신 연도가 왼쪽으로)
                         cols = sorted(pivot_df.columns, reverse=True)
                         pivot_df = pivot_df[cols]
                         
-                        # (2) 행(Account) 정렬: 표준 순서대로 (함수 호출)
-                        pivot_df = sort_financial_accounts(pivot_df, choice_sj)
+                        # 3. 행 정렬 (표준 순서 적용)
+                        pivot_df = sort_financial_accounts(pivot_df, selected_sj)
 
-                        st.markdown(f"### 📊 {selected} {choice_fs_display} - {choice_sj}")
-                        st.markdown("**단위: 억원** (데이터 출처: DART)")
+                        # --- [출력] ---
+                        st.markdown(f"#### 📊 {selected_sj} (단위: 억원)")
                         st.dataframe(pivot_df, use_container_width=True, height=800)
                         
                         csv = pivot_df.to_csv().encode('utf-8-sig')
-                        st.download_button("💾 엑셀 다운로드", csv, f"{selected}_재무제표.csv", "text/csv")
+                        st.download_button("💾 엑셀 다운로드", csv, f"{selected}_{selected_sj}.csv", "text/csv")
                         
                     else:
-                        st.warning("선택하신 조건의 데이터가 없습니다.")
+                        st.warning("선택하신 조건(연결/별도)에 해당하는 데이터가 없습니다.")
                 else:
                     st.error(f"데이터를 가져오지 못했습니다. ({msg})")
 
