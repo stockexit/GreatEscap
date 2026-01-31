@@ -210,4 +210,94 @@ if df_sheet is not None:
                 if cagr_max: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_max:+.1f}%</div>", unsafe_allow_html=True)
 
             st.write("---")
-            col1, col2 = st.columns(
+            col1, col2 = st.columns(2)
+            with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
+            with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, t_min, t_max, t_buy)
+            
+            st.subheader("📌 핵심 요약 (메모)")
+            st.info(s_info.get('메모', '메모 없음'))
+            
+            st.subheader("💡 심층 리포트")
+            note = s_info.get('노트링크', '')
+            if note and "docs.google.com" in str(note):
+                components.iframe(note.replace("/edit", "/preview"), height=800, scrolling=True)
+            elif s_info.get('이미지URL'):
+                st.image(s_info.get('이미지URL'), use_container_width=True)
+                if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
+
+        # ----------------------------------------------
+        # [탭 2] 재무제표 원본 조회 (여기서 다 해결!)
+        # ----------------------------------------------
+        with tab2:
+            if not is_korea:
+                st.info("미국 주식은 지원하지 않습니다.")
+            else:
+                DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" # 본인 키
+
+                # 1. 데이터 가져오기 (필터 없이 통째로)
+                with st.spinner(f"DART에서 {selected}의 모든 재무 데이터를 가져오는 중입니다..."):
+                    raw_df, msg = fetch_all_financials(DART_API_KEY, dart_code)
+                
+                if raw_df is not None:
+                    st.success("데이터 로딩 완료! 아래에서 보고 싶은 표를 선택하세요.")
+                    
+                    # 2. 필터링 메뉴 (사용자가 직접 선택)
+                    col_sel1, col_sel2 = st.columns(2)
+                    
+                    with col_sel1:
+                        # 연결(CFS) vs 별도(OFS)
+                        # unique()로 데이터에 실제 존재하는 항목만 보여줍니다.
+                        fs_options = raw_df['fs_div'].unique() 
+                        # 보기 좋게 이름 변경 (CFS -> 연결재무제표)
+                        fs_map = {'CFS': '연결재무제표', 'OFS': '별도재무제표'}
+                        display_fs = [fs_map.get(x, x) for x in fs_options]
+                        
+                        choice_fs_display = st.selectbox("1. 연결/별도 선택", display_fs)
+                        # 다시 코드로 변환
+                        choice_fs = [k for k, v in fs_map.items() if v == choice_fs_display][0] if choice_fs_display in fs_map.values() else choice_fs_display
+
+                    with col_sel2:
+                        # 재무상태표(BS), 손익계산서(IS) 등
+                        sj_options = raw_df['sj_nm'].unique()
+                        choice_sj = st.selectbox("2. 표 종류 선택", sj_options)
+
+                    # 3. 데이터 가공 및 출력
+                    # 선택한 조건에 맞는 행만 남기기
+                    mask = (raw_df['fs_div'] == choice_fs) & (raw_df['sj_nm'] == choice_sj)
+                    filtered_df = raw_df[mask].copy()
+                    
+                    if not filtered_df.empty:
+                        # 피벗 (행: 계정명, 열: 연도)
+                        # 중복 제거 (간혹 API 오류로 중복 발생)
+                        filtered_df = filtered_df.drop_duplicates(subset=['account_nm', 'Year'])
+                        
+                        pivot_df = filtered_df.pivot(index='account_nm', columns='Year', values='thstrm_amount')
+                        
+                        # 단위 변환 (억원)
+                        pivot_df = pivot_df / 100000000
+                        pivot_df = pivot_df.round(0)
+                        
+                        # 열(연도) 정렬 (최신이 왼쪽)
+                        cols = sorted(pivot_df.columns, reverse=True)
+                        pivot_df = pivot_df[cols]
+                        
+                        # 행(계정명) 정렬 (DART가 준 순서 'ord'가 있으면 베스트, 없으면 이름순)
+                        # 여기서는 간단히 보여주기 위해 그대로 둡니다.
+                        
+                        st.markdown(f"### 📊 {selected} {choice_fs_display} - {choice_sj}")
+                        st.markdown("**단위: 억원**")
+                        st.dataframe(pivot_df, use_container_width=True, height=800)
+                        
+                        # 다운로드
+                        csv = pivot_df.to_csv().encode('utf-8-sig')
+                        st.download_button("💾 엑셀 다운로드", csv, f"{selected}_재무제표.csv", "text/csv")
+                        
+                    else:
+                        st.warning("선택하신 조건의 데이터가 없습니다.")
+                else:
+                    st.error(f"데이터를 가져오지 못했습니다. ({msg})")
+
+    else:
+        st.warning("종목 없음")
+else:
+    st.error("데이터 로딩 실패")
