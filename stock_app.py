@@ -28,7 +28,7 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수 (current_price 인자 추가됨)
+# 4. 차트 그리기 함수
 def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, target_buy=None, current_price=None):
     try:
         interval = "1d" if period == "3mo" else "1wk"
@@ -45,17 +45,20 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # --- [NEW] 현재가 라인 (3개월 차트용) ---
+        # --- [수정됨] 현재가 라인 (3개월 차트용) ---
+        # 중앙 정렬 + 글씨 키움 + 한글로 변경
         if current_price and current_price > 0:
-            fig.add_hline(y=current_price, line_dash="dot", line_color="#FF4081", line_width=1) # 분홍색 점선
+            fig.add_hline(y=current_price, line_dash="dot", line_color="#FF4081", line_width=1)
             fig.add_annotation(
-                xref="paper", x=0, y=current_price, # 왼쪽 끝
-                text=f"<b>Now {unit}{current_price:,.0f}</b>", 
+                xref="paper", 
+                x=0.5,               # [변경] 화면 중앙
+                y=current_price, 
+                text=f"<b>현재가 {unit}{current_price:,.0f}</b>", # [변경] 텍스트 수정
                 showarrow=False, 
-                xanchor="left", xshift=5,
-                yshift=5, # 선 바로 위에 살짝
-                font=dict(color="#FF4081", size=12),
-                bgcolor="rgba(0,0,0,0.5)" # 반투명 배경
+                xanchor="center",    # [변경] 가운데 정렬
+                yshift=10,           # 선 바로 위에 배치
+                font=dict(color="#FF4081", size=16), # [변경] 글씨 크기 확대 (16px)
+                bgcolor="rgba(0,0,0,0.7)" # 배경을 조금 더 진하게 해서 글씨 잘 보이게
             )
 
         # --- 가치 평가 라인들 (5년 차트용) ---
@@ -148,7 +151,6 @@ if df_sheet is not None:
         # 차트 출력
         col1, col2 = st.columns(2)
         with col1: 
-            # [변경] 3개월 차트에 current_price 전달
             draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit, current_price=current_p)
         with col2: 
             draw_chart(ticker_code, "5y", "🏛️ 5년 장기 + 가치 평가", unit, t_min, t_max, t_buy)
