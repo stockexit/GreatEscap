@@ -16,6 +16,22 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
+# ---------------------------------------------------------
+# [NEW] 탭 글씨 크기 키우기 (CSS 스타일 주입)
+# ---------------------------------------------------------
+st.markdown("""
+<style>
+    /* 탭(Tab) 텍스트 크기 키우기 */
+    button[data-baseweb="tab"] div p {
+        font-size: 22px !important;
+        font-weight: bold !important;
+        padding-top: 5px !important;
+        padding-bottom: 5px !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+# ---------------------------------------------------------
+
 # 2. SSL 에러 방지
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -33,7 +49,6 @@ def load_data():
         return None
 
 # 4. [자동 로딩용] DART 데이터 수집 함수 (캐싱 적용 @st.cache_data)
-# 한 번 가져온 종목은 컴퓨터가 기억해서 로딩 없이 바로 띄워줍니다.
 @st.cache_data(show_spinner=False) 
 def fetch_dart_data(api_key, ticker_code, stock_name):
     try:
@@ -51,7 +66,6 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
     financial_list = []
     
     try:
-        # 진행상황을 사이드바가 아닌 로그처럼 처리 (자동이라 방해 안 되게)
         for year in range(start_year, end_year + 1):
             try:
                 df = dart.finstate(ticker_code, year, reprt_code='11011')
@@ -75,7 +89,6 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
                 target_df = df[cond_sales | cond_op | cond_net].copy()
                 financial_list.append(target_df)
             
-            # 자동 로딩이라 서버 부하 줄이기 위해 딜레이 최소화
             time.sleep(0.1)
 
         if financial_list:
@@ -171,8 +184,6 @@ if df_sheet is not None:
         if is_korea:
             DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" # ⚠️ API 키 확인
             
-            # 스피너만 보여주고 자동으로 가져옵니다.
-            # @st.cache_data 덕분에 두 번째부터는 스피너 없이 즉시 뜹니다.
             with st.spinner(f"📊 {selected} 10년치 재무제표 가져오는 중... (최초 1회만 로딩)"):
                 dart_df, msg = fetch_dart_data(DART_API_KEY, dart_code, selected)
 
