@@ -32,7 +32,7 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수 (보수적 적정가 & 최대 미래가치 2줄 표시)
+# 4. 차트 그리기 함수 (줌/팬 잠금 + 목표가 2줄 표시)
 def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
     try:
         # 3개월은 일봉(1d), 5년은 주봉(1wk)으로 설정
@@ -59,7 +59,7 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
                 showarrow=False, 
                 yshift=-20, # 텍스트를 선 아래로 배치
                 font=dict(color="white", size=13),
-                bgcolor="#00C853", # 초록 배경
+                bgcolor="#00C853", 
                 bordercolor="white", borderwidth=1, opacity=0.9
             )
 
@@ -72,17 +72,39 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
                 showarrow=False, 
                 yshift=20, # 텍스트를 선 위로 배치
                 font=dict(color="white", size=13),
-                bgcolor="#FF3D00", # 빨강 배경
+                bgcolor="#FF3D00", 
                 bordercolor="white", borderwidth=1, opacity=0.9
             )
         
+        # ▼ 레이아웃 설정 (움직임 잠금 핵심 부분)
         fig.update_layout(
             title=dict(text=f"{title} ({unit})", font=dict(size=18)),
-            height=450, template="plotly_dark",
+            height=450, 
+            template="plotly_dark",
+            margin=dict(l=10, r=10, b=10, t=50),
+            
+            # 1. 하단 슬라이더 제거
             xaxis_rangeslider_visible=False,
-            margin=dict(l=10, r=10, b=10, t=50)
+            
+            # 2. X축(시간) 이동 및 줌 금지
+            xaxis=dict(
+                fixedrange=True 
+            ),
+            
+            # 3. Y축(가격) 이동 및 줌 금지
+            yaxis=dict(
+                fixedrange=True 
+            )
         )
-        return st.plotly_chart(fig, use_container_width=True)
+        
+        # 4. 차트 설정 (상단 메뉴바 숨김 + 스크롤 줌 금지)
+        config = {
+            'displayModeBar': False, # 상단 도구모음(줌 버튼 등) 숨김
+            'scrollZoom': False      # 마우스 휠로 확대/축소 금지
+        }
+        
+        return st.plotly_chart(fig, use_container_width=True, config=config)
+
     except Exception as e:
         return st.write(f"차트 로딩 중 에러: {e}")
 
@@ -99,7 +121,6 @@ if df_sheet is not None:
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"## 🎯 {market_choice} 종목")
     
-    # 종목 리스트가 비어있을 경우 대비
     if not filtered_df.empty:
         selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
         s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
@@ -120,11 +141,11 @@ if df_sheet is not None:
             else:
                 current_p = 0
 
-            # 구글 시트 컬럼 읽기 (에러 방지용 .get 사용)
-            t_min = float(s_info.get('보수적적정가', 0)) # 컬럼명 확인 필수
-            t_max = float(s_info.get('최대미래가치', 0)) # 컬럼명 확인 필수
+            # 구글 시트 컬럼 읽기
+            t_min = float(s_info.get('보수적적정가', 0))
+            t_max = float(s_info.get('최대미래가치', 0)) 
             
-            # 수익률 계산 (현재가가 0이면 0 처리)
+            # 수익률 계산
             if current_p > 0:
                 gap_min = ((t_min - current_p) / current_p) * 100
                 gap_max = ((t_max - current_p) / current_p) * 100
@@ -139,7 +160,7 @@ if df_sheet is not None:
         # --- 메인 화면 구성 ---
         st.title(f"🚀 {selected} ({ticker_code}) Analysis")
         
-        # 3단 지표 (현재가 / 보수적 / 최대)
+        # 3단 지표
         c1, c2, c3 = st.columns(3)
         c1.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
         c2.metric("🛡️ 보수적 적정가 (안전)", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
@@ -152,7 +173,6 @@ if df_sheet is not None:
         with col1:
             draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
         with col2:
-            # 5년 차트에만 min, max 선을 모두 전달
             draw_chart(ticker_code, "5y", "🏛️ 5년 장기 + 가치 평가", unit, t_min, t_max)
 
         st.write("---")
