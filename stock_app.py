@@ -15,12 +15,13 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# [스타일] 가독성 강화
+# [스타일] 표 디자인 (헤더 색상, 폰트 등)
 # ---------------------------------------------------------
 st.markdown("""
 <style>
     button[data-baseweb="tab"] div p { font-size: 18px !important; font-weight: bold !important; }
-    thead tr th { background-color: #333333 !important; color: white !important; font-size: 15px !important; }
+    thead tr th { background-color: #f0f2f6 !important; color: #31333F !important; font-size: 15px !important; font-weight: bold !important; border-bottom: 2px solid #ccc !important;}
+    tbody tr td { font-size: 14px !important; }
 </style>
 """, unsafe_allow_html=True)
 # ---------------------------------------------------------
@@ -41,7 +42,71 @@ def load_data():
     except:
         return None
 
-# 4. [핵심] DART 데이터 원본 수집 함수 (필터링 X)
+# ---------------------------------------------------------
+# [핵심 기능] 재무제표 순서 정렬기 (Sorting Helper)
+# ---------------------------------------------------------
+def sort_financial_accounts(df, report_type):
+    """
+    뒤죽박죽 섞인 계정명을 표준 순서대로 정렬해주는 함수
+    """
+    # 1. 우리가 원하는 순서 (우선순위 목록)
+    if '손익' in report_type or '포괄' in report_type:
+        order_list = [
+            '매출액', '수익(매출액)', '영업수익', '매출',
+            '매출원가', '영업비용',
+            '매출총이익',
+            '판매비와관리비', '판매비및관리비', '판관비',
+            '영업이익', '영업이익(손실)',
+            '금융수익', '금융원가', '금융비용',
+            '기타수익', '기타비용', '기타영업외수익', '기타영업외비용',
+            '지분법이익', '관계기업투자이익',
+            '법인세비용차감전계속사업이익', '법인세차감전순이익',
+            '법인세비용',
+            '중단영업이익',
+            '당기순이익', '당기순이익(손실)',
+            '지배기업소유주지분', '지배주주지분순이익',
+            '비지배지분', '비지배주주지분순이익',
+            '총포괄손익', '총포괄이익'
+        ]
+    elif '상태' in report_type: # 재무상태표
+        order_list = [
+            '자산총계', '유동자산', '현금및현금성자산', '재고자산', '비유동자산', '유형자산', '무형자산',
+            '부채총계', '유동부채', '단기차입금', '비유동부채', '사채', '장기차입금',
+            '자본총계', '지배기업소유주지분', '자본금', '이익잉여금'
+        ]
+    elif '현금' in report_type: # 현금흐름표
+        order_list = [
+            '영업활동현금흐름', '영업활동으로인한현금흐름',
+            '투자활동현금흐름', '투자활동으로인한현금흐름',
+            '재무활동현금흐름', '재무활동으로인한현금흐름',
+            '기초현금및현금성자산', '기말현금및현금성자산'
+        ]
+    else:
+        return df # 모르는 표는 그냥 둠
+
+    # 2. 정렬 로직 적용
+    # 데이터프레임의 인덱스(계정명)를 리스트 순서대로 다시 맞춤
+    # 리스트에 없는 항목은 맨 뒤로 보냄
+    
+    # 현재 데이터에 있는 계정명들
+    current_index = df.index.tolist()
+    
+    # 순서 리스트에 있는 것 먼저 담기
+    sorted_index = []
+    for item in order_list:
+        if item in current_index:
+            sorted_index.append(item)
+            
+    # 순서 리스트에 없는 나머지(기타 항목들) 담기
+    for item in current_index:
+        if item not in sorted_index:
+            sorted_index.append(item)
+            
+    # 재정렬 실행
+    return df.reindex(sorted_index)
+
+
+# 4. DART 데이터 수집 함수
 @st.cache_data(show_spinner=False) 
 def fetch_all_financials(api_key, ticker_code):
     try:
@@ -50,42 +115,38 @@ def fetch_all_financials(api_key, ticker_code):
          return None, f"API 키 오류: {e}"
 
     if len(str(ticker_code)) != 6:
-        return None, "DART 조회 불가 (종목코드 6자리 확인)"
+        return None, "DART 조회 불가"
 
     now_year = datetime.datetime.now().year 
-    # 최근 5년치만 가져옵니다 (데이터 양이 많아서 속도 조절)
-    # 원하시면 range(now_year - 10, now_year + 1)로 수정 가능
+    # 최근 5년치 (필요하면 숫자 수정)
     years = range(now_year - 5, now_year + 1) 
     
     all_data_list = []
-    
-    # 진행률 표시
     status_text = st.empty()
     
     try:
         for year in years:
             status_text.text(f"📅 {year}년도 데이터 원본 가져오는 중...")
             try:
-                # 11011: 사업보고서 (연간 확정 실적)
                 df = dart.finstate(ticker_code, year, reprt_code='11011')
             except:
                 df = None
 
             if df is not None:
                 df['Year'] = str(year)
-                # 필요한 컬럼만 선택 (sj_nm: 재무제표 종류, account_nm: 계정명)
-                cols = ['Year', 'fs_div', 'sj_div', 'sj_nm', 'account_nm', 'thstrm_amount', 'ord']
+                # 필요한 컬럼만
+                cols = ['Year', 'fs_div', 'sj_nm', 'account_nm', 'thstrm_amount']
                 valid_cols = [c for c in cols if c in df.columns]
                 all_data_list.append(df[valid_cols])
             
-            time.sleep(0.1) # 서버 차단 방지
+            time.sleep(0.1)
 
-        status_text.empty() # 메시지 삭제
+        status_text.empty()
 
         if all_data_list:
             df_final = pd.concat(all_data_list)
             
-            # 금액 숫자 변환
+            # 숫자 변환
             def clean_number(x):
                 try:
                     return float(str(x).replace(',', ''))
@@ -165,7 +226,7 @@ if df_sheet is not None:
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
-        # 지표 계산
+        # 지표 및 등급
         t_min = float(s_info.get('보수적적정가', 0))
         t_max = float(s_info.get('최대미래가치', 0))
         t_buy = float(s_info.get('매수가치', 0))
@@ -193,9 +254,6 @@ if df_sheet is not None:
 
         tab1, tab2 = st.tabs(["🚀 종목 대시보드", "📊 전체 재무제표 (원본)"])
 
-        # ----------------------------------------------
-        # [탭 1] 대시보드
-        # ----------------------------------------------
         with tab1:
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -225,70 +283,53 @@ if df_sheet is not None:
                 st.image(s_info.get('이미지URL'), use_container_width=True)
                 if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
 
-        # ----------------------------------------------
-        # [탭 2] 재무제표 원본 조회 (여기서 다 해결!)
-        # ----------------------------------------------
         with tab2:
             if not is_korea:
                 st.info("미국 주식은 지원하지 않습니다.")
             else:
-                DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" # 본인 키
+                DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
 
-                # 1. 데이터 가져오기 (필터 없이 통째로)
-                with st.spinner(f"DART에서 {selected}의 모든 재무 데이터를 가져오는 중입니다..."):
+                with st.spinner(f"DART에서 {selected}의 데이터를 가져와 정리 중입니다..."):
                     raw_df, msg = fetch_all_financials(DART_API_KEY, dart_code)
                 
                 if raw_df is not None:
-                    st.success("데이터 로딩 완료! 아래에서 보고 싶은 표를 선택하세요.")
-                    
-                    # 2. 필터링 메뉴 (사용자가 직접 선택)
+                    # 1. 컨트롤 패널
                     col_sel1, col_sel2 = st.columns(2)
-                    
                     with col_sel1:
-                        # 연결(CFS) vs 별도(OFS)
-                        # unique()로 데이터에 실제 존재하는 항목만 보여줍니다.
                         fs_options = raw_df['fs_div'].unique() 
-                        # 보기 좋게 이름 변경 (CFS -> 연결재무제표)
                         fs_map = {'CFS': '연결재무제표', 'OFS': '별도재무제표'}
                         display_fs = [fs_map.get(x, x) for x in fs_options]
-                        
                         choice_fs_display = st.selectbox("1. 연결/별도 선택", display_fs)
-                        # 다시 코드로 변환
                         choice_fs = [k for k, v in fs_map.items() if v == choice_fs_display][0] if choice_fs_display in fs_map.values() else choice_fs_display
 
                     with col_sel2:
-                        # 재무상태표(BS), 손익계산서(IS) 등
                         sj_options = raw_df['sj_nm'].unique()
                         choice_sj = st.selectbox("2. 표 종류 선택", sj_options)
 
-                    # 3. 데이터 가공 및 출력
-                    # 선택한 조건에 맞는 행만 남기기
+                    # 2. 필터링
                     mask = (raw_df['fs_div'] == choice_fs) & (raw_df['sj_nm'] == choice_sj)
                     filtered_df = raw_df[mask].copy()
                     
                     if not filtered_df.empty:
-                        # 피벗 (행: 계정명, 열: 연도)
-                        # 중복 제거 (간혹 API 오류로 중복 발생)
                         filtered_df = filtered_df.drop_duplicates(subset=['account_nm', 'Year'])
-                        
                         pivot_df = filtered_df.pivot(index='account_nm', columns='Year', values='thstrm_amount')
                         
-                        # 단위 변환 (억원)
+                        # 단위 변환
                         pivot_df = pivot_df / 100000000
                         pivot_df = pivot_df.round(0)
                         
-                        # 열(연도) 정렬 (최신이 왼쪽)
+                        # [핵심] 3. 정렬 로직 적용! (Sort)
+                        # (1) 열(Year) 정렬: 최신순 (내림차순)
                         cols = sorted(pivot_df.columns, reverse=True)
                         pivot_df = pivot_df[cols]
                         
-                        # 행(계정명) 정렬 (DART가 준 순서 'ord'가 있으면 베스트, 없으면 이름순)
-                        # 여기서는 간단히 보여주기 위해 그대로 둡니다.
-                        
+                        # (2) 행(Account) 정렬: 표준 순서대로 (함수 호출)
+                        pivot_df = sort_financial_accounts(pivot_df, choice_sj)
+
                         st.markdown(f"### 📊 {selected} {choice_fs_display} - {choice_sj}")
-                        st.markdown("**단위: 억원**")
+                        st.markdown("**단위: 억원** (데이터 출처: DART)")
                         st.dataframe(pivot_df, use_container_width=True, height=800)
                         
-                        # 다운로드
                         csv = pivot_df.to_csv().encode('utf-8-sig')
                         st.download_button("💾 엑셀 다운로드", csv, f"{selected}_재무제표.csv", "text/csv")
                         
