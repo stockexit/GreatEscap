@@ -41,17 +41,17 @@ def load_data():
         return None
 
 # ---------------------------------------------------------
-# [핵심 로직] 이익 & EPS 추출 후 주식수 역산
+# [핵심 로직] 이익 & EPS 추출 후 주식수 역산 (에러 방지 강화판)
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False) 
 def fetch_value_metrics(api_key, ticker_code):
     try:
         dart = OpenDartReader(api_key)
     except Exception as e:
-         return None, f"API 키 오류: {e}"
+         return None, None, f"API 키 오류: {e}"
 
     if len(str(ticker_code)) != 6:
-        return None, "DART 조회 불가"
+        return None, None, "DART 조회 불가"
 
     now_year = datetime.datetime.now().year 
     years = range(now_year - 10, now_year + 1) 
@@ -61,55 +61,70 @@ def fetch_value_metrics(api_key, ticker_code):
     
     try:
         for year in years:
-            status_text.text(f"🔍 {year}년 이익 및 주식수 계산 중...")
+            status_text.text(f"🔍 {year}년 실적 데이터 정밀 분석 중...")
             try:
                 # 11011: 사업보고서 (연간)
                 df = dart.finstate(ticker_code, year, reprt_code='11011')
             except:
                 df = None
 
-            if df is not None:
-                # --- 1. 당기순이익 찾기 ---
-                # (포괄손익, 지배/비지배 등 헷갈리는거 다 제외하고 순수 당기순이익만 타겟팅)
-                cond_net = df['account_nm'].str.contains('당기순이익') & \
-                           ~df['account_nm'].str.contains('포괄') & \
-                           ~df['account_nm'].str.contains('지배') & \
-                           ~df['account_nm'].str.contains('비지배')
+            # [수정 1] 데이터가 있고, 'account_nm' 컬럼이 진짜로 있는지 확인 (에러 원인 차단)
+            if df is not None and not df.empty and 'account_nm' in df.columns:
                 
-                # --- 2. EPS(기본주당이익) 찾기 ---
-                # "기본" 과 "주당" 이 들어간 모든 항목 검색
-                cond_eps = df['account_nm'].str.contains('기본') & df['account_nm'].str.contains('주당')
+                # --- 1. 당기순이익 찾기 (검색어 확장) ---
+                # '당기순이익' 또는 '당기순손익'이 포함된 것 중, 연결/지배/포괄 등의 키워드 정리
+                mask_net = df['account_nm'].str.contains('당기순이익|당기순손익', na=False) & \
+                           ~df['account_nm'].str.contains('포괄', na=False) & \
+                           ~df['account_nm'].str.contains('비지배', na=False)
+                
+                # --- 2. EPS 찾기 (검색어 대폭 완화) ---
+                # '기본'과 '주당'이 들어간 거면 다 찾음 (보통주 기준)
+                mask_eps = df['account_nm'].str.contains('주당', na=False) & \
+                           df['account_nm'].str.contains('기본', na=False)
 
-                # 연결(CFS) 우선, 없으면 별도(OFS)
+                # 연결(CFS) 데이터를 우선적으로 찾고, 없으면 별도(OFS)를 찾음
                 target_df = df[df['fs_div'] == 'CFS']
                 if target_df.empty:
                     target_df = df[df['fs_div'] == 'OFS']
                 
                 if not target_df.empty:
-                    # 값 가져오기
-                    row_net = target_df[cond_net]
-                    row_eps = target_df[cond_eps]
-                    
+                    # (1) 순이익 추출
+                    rows_net = target_df[mask_net]
                     net_income = 0
+                    
+                    # '지배기업소유주지분'이 있으면 그걸 최우선으로 씀 (가장 정확함)
+                    row_controlling = rows_net[rows_net['account_nm'].str.contains('지배', na=False)]
+                    if not row_controlling.empty:
+                        target_row = row_controlling.iloc[0]
+                    elif not rows_net.empty:
+                        target_row = rows_net.iloc[0]
+                    else:
+                        target_row = None
+
+                    if target_row is not None:
+                        try: net_income = float(str(target_row['thstrm_amount']).replace(',', ''))
+                        except: pass
+
+                    # (2) EPS 추출
+                    rows_eps = target_df[mask_eps]
                     eps = 0
-                    
-                    # (1) 순이익 파싱
-                    if not row_net.empty:
-                        val_str = str(row_net.iloc[0]['thstrm_amount']).replace(',', '')
-                        try: net_income = float(val_str)
+                    if not rows_eps.empty:
+                        # 보통주/우선주 중 '보통주'가 있으면 우선 선택, 없으면 첫번째 것
+                        row_common = rows_eps[~rows_eps['account_nm'].str.contains('우선', na=False)]
+                        if not row_common.empty:
+                            eps_row = row_common.iloc[0]
+                        else:
+                            eps_row = rows_eps.iloc[0]
+                            
+                        try: eps = float(str(eps_row['thstrm_amount']).replace(',', ''))
                         except: pass
                     
-                    # (2) EPS 파싱 (여러 개면 첫 번째 것, 보통 보통주EPS임)
-                    if not row_eps.empty:
-                        val_str = str(row_eps.iloc[0]['thstrm_amount']).replace(',', '')
-                        try: eps = float(val_str)
-                        except: pass
-                    
-                    # (3) 유통주식수 역산 (순이익 / EPS)
+                    # (3) 주식수 역산 (EPS가 0이 아니어야 함)
                     shares = 0
                     if eps != 0:
                         shares = net_income / eps
 
+                    # 데이터가 하나라도 있으면 저장
                     if net_income != 0 or eps != 0:
                         result_data.append({
                             '연도': str(year),
@@ -125,27 +140,26 @@ def fetch_value_metrics(api_key, ticker_code):
         if result_data:
             df_final = pd.DataFrame(result_data)
             
-            # 보기 좋게 단위 변환
+            # 단위 가공
             df_final['당기순이익(억)'] = (df_final['당기순이익(원)'] / 100000000).round(0)
-            # 주식수는 '만 주' 단위로
             df_final['유통주식수(만주)'] = (df_final['유통주식수(주)'] / 10000).round(0)
             df_final['EPS(원)'] = df_final['EPS(원)'].round(0)
 
-            # 출력용 데이터프레임 (피벗)
+            # 표 포맷팅
             view_cols = ['연도', '당기순이익(억)', 'EPS(원)', '유통주식수(만주)']
             df_view = df_final[view_cols].set_index('연도').T
-            cols = sorted(df_view.columns, reverse=True)
+            cols = sorted(df_view.columns, reverse=True) # 최신순 정렬
             df_view = df_view[cols]
             
             return df_view, df_final, "OK"
         else:
-            return None, None, "데이터 없음"
+            return None, None, "DART에서 재무 데이터를 찾지 못했습니다."
 
     except Exception as e:
         status_text.empty()
-        return None, None, f"에러: {e}"
+        return None, None, f"시스템 오류 발생: {e}"
 
-# 4. 차트 함수 (복합 차트)
+# 4. 차트 함수 (복구 완료)
 def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, target_buy=None, current_price=None):
     try:
         interval = "1d" if period == "3mo" else "1wk"
@@ -208,19 +222,19 @@ if df_sheet is not None:
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
+        # 구글 시트 값 안전하게 로딩
         try:
-            ticker_obj = yf.Ticker(yf_code)
-            history = ticker_obj.history(period="1d")
-            current_p = history['Close'].iloc[-1] if not history.empty else 0
-            
-            # 구글시트 값 로딩 (콤마 제거)
             def clean_val(v):
                 try: return float(str(v).replace(',', ''))
                 except: return 0
-                
+            
             t_min = clean_val(s_info.get('보수적적정가', 0))
             t_max = clean_val(s_info.get('최대미래가치', 0))
             t_buy = clean_val(s_info.get('매수가치', 0))
+            
+            ticker_obj = yf.Ticker(yf_code)
+            history = ticker_obj.history(period="1d")
+            current_p = history['Close'].iloc[-1] if not history.empty else 0
             
             gap_min = ((t_min - current_p)/current_p)*100 if current_p else 0
             gap_max = ((t_max - current_p)/current_p)*100 if current_p else 0
@@ -240,7 +254,7 @@ if df_sheet is not None:
 
         tab1, tab2 = st.tabs(["🚀 종목 대시보드", "💎 가치분석 (이익/EPS/주식수)"])
 
-        # --- 탭 1: 대시보드 ---
+        # --- 탭 1 ---
         with tab1:
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -270,7 +284,7 @@ if df_sheet is not None:
                 st.image(s_info.get('이미지URL'), use_container_width=True)
                 if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
 
-        # --- 탭 2: 가치분석 (EPS 역산) ---
+        # --- 탭 2 ---
         with tab2:
             st.subheader(f"📊 {selected} 10년 가치 지표 (순이익 / EPS / 주식수)")
             
@@ -279,28 +293,19 @@ if df_sheet is not None:
             else:
                 DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
                 
-                with st.spinner(f"DART에서 {selected}의 이익과 주식수를 계산 중..."):
+                with st.spinner(f"DART에서 {selected}의 이익과 주식수를 정밀 분석 중..."):
                     display_df, raw_data, msg = fetch_value_metrics(DART_API_KEY, dart_code)
                 
                 if display_df is not None:
-                    # 1. 표 출력
                     st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
                     st.caption("※ 유통주식수(추정) = 당기순이익 ÷ EPS (기업이 발표한 확정 EPS 기준 역산)")
 
-                    # 2. 복합 차트 (이익은 막대, EPS는 선)
+                    # 차트
                     raw_data = raw_data.sort_values('연도')
                     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-                    # 막대: 당기순이익
-                    fig.add_trace(
-                        go.Bar(x=raw_data['연도'], y=raw_data['당기순이익(억)'], name="당기순이익(억)", marker_color='#2962FF', opacity=0.5),
-                        secondary_y=False
-                    )
-                    # 선: EPS
-                    fig.add_trace(
-                        go.Scatter(x=raw_data['연도'], y=raw_data['EPS(원)'], name="EPS(원)", mode='lines+markers+text', text=raw_data['EPS(원)'], textposition="top center", line=dict(color='#FFD600', width=3)),
-                        secondary_y=True
-                    )
+                    fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['당기순이익(억)'], name="당기순이익(억)", marker_color='#2962FF', opacity=0.5), secondary_y=False)
+                    fig.add_trace(go.Scatter(x=raw_data['연도'], y=raw_data['EPS(원)'], name="EPS(원)", mode='lines+markers+text', text=raw_data['EPS(원)'], textposition="top center", line=dict(color='#FFD600', width=3)), secondary_y=True)
 
                     fig.update_layout(title="당기순이익(좌) vs EPS(우) 성장 추이", template="plotly_dark", height=500, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                     fig.update_yaxes(title_text="당기순이익 (억원)", secondary_y=False, showgrid=False)
