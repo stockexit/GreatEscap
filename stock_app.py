@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import ssl
 
-# 1. 화면 설정 (메뉴 상시 오픈 및 넓은 화면 구성)
+# 1. 화면 설정 (순정 상태 유지, 메뉴 상시 오픈)
 st.set_page_config(
     page_title="사장님 투자 터미널", 
     layout="wide",
@@ -25,7 +25,7 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수 (SyntaxError 완벽 수술 버전)
+# 4. 차트 그리기 함수
 def draw_chart(ticker, period, title):
     try:
         interval = "1wk" if period == "5y" else "1d"
@@ -46,7 +46,7 @@ def draw_chart(ticker, period, title):
         )
         return st.plotly_chart(fig, use_container_width=True)
     except:
-        return st.write("차트를 생성하는 중...")
+        return st.write("차트 데이터를 불러오는 중...")
 
 # 5. 메인 로직 실행
 df_sheet = load_data()
@@ -57,28 +57,29 @@ if df_sheet is not None:
     selected = st.sidebar.selectbox("종목을 골라주세요 👇", df_sheet['종목명'].unique())
     s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
     
-    # 실시간 주가 및 수익률 계산
+    # 실시간 데이터 가져오기 (주가 및 뉴스)
     try:
         ticker_obj = yf.Ticker(s_info['코드'])
         current_p = ticker_obj.history(period="1d")['Close'].iloc[-1]
         target_p = float(s_info['적정가'])
         gap_percent = ((target_p - current_p) / current_p) * 100
+        news_list = ticker_obj.news[:5] # 최신 뉴스 5개 추출
     except:
-        current_p, target_p, gap_percent = 0, 0, 0
+        current_p, target_p, gap_percent, news_list = 0, 0, 0, []
 
-    # 메인 화면 상단 타이틀
+    # 메인 화면 구성
     st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
     
-    # 상단 요약 지표 (실시간 데이터)
-    c1, c2, c3 = st.columns(3) #
+    # 지표 요약
+    c1, c2, c3 = st.columns(3)
     c1.metric("실시간 현재가", f"${current_p:.2f}")
     c2.metric("사장님 목표가", f"${target_p:.2f}")
     c3.metric("목표 수익률", f"{gap_percent:.1f}%", delta=f"{gap_percent:.1f}%")
 
     st.write("---")
 
-    # 가로 2단 차트 배치
-    col1, col2 = st.columns(2) #
+    # 차트 배치
+    col1, col2 = st.columns(2)
     with col1:
         draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
     with col2:
@@ -86,9 +87,20 @@ if df_sheet is not None:
 
     st.write("---")
 
-    # 하단 분석 메모 (순정 스타일로 복구)
-    # '메메' 대신 '메모'를 정확하게 사용합니다.
-    st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
+    # 하단 레이아웃 (메모 + 실시간 뉴스)
+    low_col1, low_col2 = st.columns([1, 1])
+    
+    with low_col1:
+        st.subheader("💡 분석 메모")
+        st.success(f"{s_info['메모']}")
+        
+    with low_col2:
+        st.subheader("📰 실시간 최신 뉴스")
+        if news_list:
+            for news in news_list:
+                st.markdown(f"**[{news['publisher']}]** [{news['title']}]({news['link']})")
+        else:
+            st.write("현재 관련 뉴스가 없습니다.")
 
 else:
     st.error("데이터 로딩 실패! 구글 시트 연결을 확인하세요.")
