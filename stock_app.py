@@ -131,7 +131,7 @@ if df_sheet is not None:
                 gap_max = ((t_max - current_p) / current_p) * 100
                 gap_buy = ((t_buy - current_p) / current_p) * 100
                 
-                # --- [NEW] 7년 연복리(CAGR) 계산 ---
+                # --- 7년 기준 CAGR 계산 (공식 유지) ---
                 if t_max > 0:
                     cagr = ((t_max / current_p) ** (1/7) - 1) * 100
                 else:
@@ -156,13 +156,13 @@ if df_sheet is not None:
         with c3: 
             st.metric("🛡️ 보수적 적정가 (안전)", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
         
-        # [NEW] 7년 연복리 배지 추가
+        # [NEW] 문구 변경: 7~10년 연평균수익률
         with c4: 
             st.metric("🚀 최대 미래가치 (목표)", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
             if cagr != 0:
                 st.markdown(f"""
                     <div style="background-color: #7B1FA2; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; text-align: center; display: inline-block; margin-top: -15px; font-size: 0.9em;">
-                        📈 7년 연복리 {cagr:+.1f}%
+                        📈 7~10년 연평균수익률 {cagr:+.1f}%
                     </div>
                 """, unsafe_allow_html=True)
 
