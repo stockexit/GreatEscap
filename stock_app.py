@@ -9,7 +9,7 @@ import OpenDartReader
 import time
 import datetime
 import re
-from pykrx import stock  # [추가] 주식수 확보용
+from pykrx import stock  # [핵심] KRX 데이터 로딩용
 
 # =========================================================
 # 1. 화면 설정 & 스타일
@@ -28,6 +28,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# SSL 인증서 문제 해결
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # =========================================================
@@ -46,7 +47,7 @@ def load_data():
         return None
 
 # =========================================================
-# [신규 함수] pykrx로 10년치 상장주식수 가져오기
+# 3. [핵심] 수정 주식수 계산 함수 (액면분할 보정)
 # =========================================================
 @st.cache_data(show_spinner=False)
 def fetch_shares_history(ticker_code):
@@ -56,14 +57,29 @@ def fetch_shares_history(ticker_code):
         start_date = f"{now_year - 12}0101"
         end_date = datetime.datetime.now().strftime("%Y%m%d")
         
-        # 2. KRX에서 일별 데이터 조회
-        # (시가총액, 상장주식수, 거래량 등이 포함됨)
-        df = stock.get_market_cap_by_date(start_date, end_date, ticker_code)
+        # 2. 시가총액 데이터 (액면분할과 무관한 기업 가치)
+        df_cap = stock.get_market_cap_by_date(start_date, end_date, ticker_code)
         
-        # 3. 연도별 마지막 거래일(폐장일) 데이터만 추출
-        df_yearly = df.groupby(df.index.year).tail(1)
+        # 3. 수정 주가 데이터 (액면분할이 반영된 현재 기준 가격)
+        # adjusted=True 옵션이 핵심입니다.
+        df_price = stock.get_market_ohlcv_by_date(start_date, end_date, ticker_code, adjusted=True)
         
-        # 4. 필요한 것만 남기기 (인덱스는 연도)
+        # 4. 데이터 병합 (날짜 기준)
+        # 시가총액과 수정주가를 합칩니다.
+        # df_cap에는 '시가총액', df_price에는 '종가'(수정주가)가 있습니다.
+        df_merged = pd.concat([df_cap['시가총액'], df_price['종가']], axis=1)
+        df_merged.columns = ['시가총액', '수정주가']
+        
+        # 5. [보정 로직] 수정 상장주식수 역산
+        # 공식: 시가총액 / 수정주가 = (보정된) 상장주식수
+        df_merged['상장주식수'] = df_merged.apply(
+            lambda x: x['시가총액'] / x['수정주가'] if x['수정주가'] > 0 else 0, axis=1
+        )
+
+        # 6. 연도별 마지막 거래일(폐장일) 데이터만 추출
+        df_yearly = df_merged.groupby(df_merged.index.year).tail(1)
+        
+        # 7. 정리
         df_yearly['연도'] = df_yearly.index.year.astype(str)
         result = df_yearly[['연도', '상장주식수']].reset_index(drop=True)
         
@@ -72,7 +88,7 @@ def fetch_shares_history(ticker_code):
         return pd.DataFrame()
 
 # =========================================================
-# 3. DART 재무제표 크롤링
+# 4. DART 재무제표 크롤링 (EPS 계산 로직 포함)
 # =========================================================
 @st.cache_data(show_spinner=False) 
 def fetch_core_financials(api_key, ticker_code):
@@ -94,7 +110,7 @@ def fetch_core_financials(api_key, ticker_code):
         for year in years:
             if len(result_data) >= 10: break
                 
-            status_text.text(f"🔍 {year}년 재무데이터 수집 중...")
+            status_text.text(f"🔍 {year}년 재무데이터 정밀 분석 중...")
             
             df = None
             try: df = dart.finstate(ticker_code, year, reprt_code='11011')
@@ -111,8 +127,7 @@ def fetch_core_financials(api_key, ticker_code):
                 mask_op = df['account_clean'].str.contains('영업이익') & \
                           ~df['account_clean'].str.contains('기타|금융|관계|지분')
                 
-                # C. 당기순이익 (EPS 계산용) - *중요*
-                # EPS가 안 나오면 순이익을 가져와서 나누면 됩니다.
+                # C. 당기순이익 (EPS 계산의 핵심 분자)
                 mask_net = df['account_clean'].str.contains('당기순이익') & \
                            ~df['account_clean'].str.contains('포괄') & \
                            ~df['account_clean'].str.contains('비지배')
@@ -123,7 +138,6 @@ def fetch_core_financials(api_key, ticker_code):
                     if rows.empty: return 0
                     
                     if len(rows) > 1:
-                        # 당기순이익의 경우 '지배기업소유주' 지분이 정확함
                         if '당기순이익' in str(mask):
                             p_row = rows[rows['account_clean'].str.contains('지배')]
                             if not p_row.empty: rows = p_row
@@ -132,13 +146,13 @@ def fetch_core_financials(api_key, ticker_code):
                     try: return float(val_str)
                     except: return 0
 
-                # 연결 우선 -> 별도
+                # 연결 -> 별도 순서로 탐색
                 df_cfs = df[df['fs_div'] == 'CFS']
                 df_ofs = df[df['fs_div'] == 'OFS']
 
                 sales = extract_value(df_cfs, mask_sales)
                 op_income = extract_value(df_cfs, mask_op)
-                net_income = extract_value(df_cfs, mask_net) # 순이익 확보
+                net_income = extract_value(df_cfs, mask_net)
 
                 if sales == 0: sales = extract_value(df_ofs, mask_sales)
                 if op_income == 0: op_income = extract_value(df_ofs, mask_op)
@@ -149,7 +163,7 @@ def fetch_core_financials(api_key, ticker_code):
                         '연도': str(year),
                         '매출액': sales,
                         '영업이익': op_income,
-                        '순이익': net_income # 일단 순이익 저장
+                        '순이익': net_income
                     })
             
             time.sleep(0.05)
@@ -160,21 +174,19 @@ def fetch_core_financials(api_key, ticker_code):
             # 1. DART 데이터 (매출, 영업이익, 순이익)
             df_dart = pd.DataFrame(result_data)
             
-            # 2. KRX 데이터 (상장주식수)
+            # 2. KRX 데이터 (수정 상장주식수 - 액면분할 보정됨)
             df_shares = fetch_shares_history(ticker_code)
             
-            # 3. 두 데이터 병합 (연도 기준)
+            # 3. 병합
             if not df_shares.empty:
                 df_final = pd.merge(df_dart, df_shares, on='연도', how='left')
             else:
                 df_final = df_dart
-                df_final['상장주식수'] = 0 # 실패시 0
+                df_final['상장주식수'] = 0
             
-            # 연도 내림차순
             df_final = df_final.sort_values('연도', ascending=False)
             
-            # 4. [핵심] EPS 직접 계산 (순이익 / 상장주식수)
-            # DART EPS가 0이면 이 방식으로 대체됨
+            # 4. [보정 EPS 계산] 순이익 / 수정주식수
             def calc_eps(row):
                 try:
                     income = row['순이익']
@@ -184,16 +196,16 @@ def fetch_core_financials(api_key, ticker_code):
                     return 0
                 except: return 0
 
-            df_final['EPS(계산)'] = df_final.apply(calc_eps, axis=1)
+            df_final['EPS(보정)'] = df_final.apply(calc_eps, axis=1)
 
-            # 5. 단위 변환 및 정리
+            # 5. 단위 정리
             df_final['매출액(억)'] = (df_final['매출액'] / 100000000).round(0)
             df_final['영업이익(억)'] = (df_final['영업이익'] / 100000000).round(0)
             df_final['순이익(억)'] = (df_final['순이익'] / 100000000).round(0)
             df_final['상장주식수(만주)'] = (df_final['상장주식수'] / 10000).round(0)
-            df_final['EPS(원)'] = df_final['EPS(계산)'].round(0)
+            df_final['EPS(원)'] = df_final['EPS(보정)'].round(0)
 
-            # 보여줄 컬럼
+            # 화면 출력용
             view_cols = ['연도', '매출액(억)', '영업이익(억)', '순이익(억)', '상장주식수(만주)', 'EPS(원)']
             df_view = df_final[view_cols].set_index('연도').T
             
@@ -206,7 +218,7 @@ def fetch_core_financials(api_key, ticker_code):
         return None, None, f"오류: {e}"
 
 # =========================================================
-# 4. 차트 함수 (기존 유지)
+# 5. 차트 함수
 # =========================================================
 def draw_chart(ticker, period, title, unit, current_price=None, target_min=None, target_max=None, target_buy=None):
     try:
@@ -238,7 +250,7 @@ def draw_chart(ticker, period, title, unit, current_price=None, target_min=None,
     except Exception as e: return st.write(f"차트 에러: {e}")
 
 # =========================================================
-# 5. 메인 앱 로직
+# 6. 메인 앱 로직
 # =========================================================
 df_sheet = load_data()
 
@@ -339,7 +351,7 @@ if df_sheet is not None:
             else:
                 DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
                 
-                with st.spinner(f"DART 재무정보 + KRX 주식수 병합 중... ({selected})"):
+                with st.spinner(f"DART 재무정보 + KRX 수정주가 병합 중... ({selected})"):
                     display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
                 
                 if display_df is not None:
@@ -361,7 +373,7 @@ if df_sheet is not None:
 
                     fig.add_trace(go.Scatter(
                         x=raw_data['연도'], y=raw_data['EPS(원)'], 
-                        name='EPS(계산됨)', mode='lines+markers+text',
+                        name='EPS(보정됨)', mode='lines+markers+text',
                         line=dict(color='#00E676', width=3),
                         marker=dict(size=8, color='#00E676', symbol='diamond'),
                         text=raw_data['EPS(원)'].apply(lambda x: f"{x:,.0f}"),
