@@ -216,4 +216,31 @@ if df_sheet is not None:
             st.markdown(f"""<div style="background-color: {badge_color}; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold;">{badge_icon} {badge_text}</div>""", unsafe_allow_html=True)
         with c2: st.metric("⚡ 매수 가치", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
         with c3: 
-            st.metric("🛡️ 보수적 적정가", f"{unit}{p_format.format
+            st.metric("🛡️ 보수적 적정가", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
+            if cagr_min: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_min:+.1f}%</div>", unsafe_allow_html=True)
+        with c4: 
+            st.metric("🚀 최대 미래가치", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
+            if cagr_max: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_max:+.1f}%</div>", unsafe_allow_html=True)
+
+        st.write("---")
+        col1, col2 = st.columns(2)
+        with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
+        with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, t_min, t_max, t_buy)
+
+        st.write("---")
+        st.subheader("📌 핵심 요약 (메모)")
+        st.info(s_info.get('메모', '메모 없음'))
+        
+        st.subheader("💡 심층 리포트")
+        note = s_info.get('노트링크', '')
+        if note and "docs.google.com" in str(note):
+            components.iframe(note.replace("/edit", "/preview"), height=800, scrolling=True)
+        elif s_info.get('이미지URL'):
+            st.image(s_info.get('이미지URL'), use_container_width=True)
+            if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
+        else:
+            st.text("등록된 리포트 없음")
+    else:
+        st.warning("종목 없음")
+else:
+    st.error("데이터 로딩 실패")
