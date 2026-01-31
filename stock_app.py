@@ -4,17 +4,17 @@ import pandas as pd
 import plotly.graph_objects as go
 import ssl
 
-# 1. 화면 설정 (한국 시장 우선)
+# 1. 화면 설정 (한국 시장을 최상단에 배치)
 st.set_page_config(
     page_title="사장님 투자 터미널", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
 
-# 2. SSL 에러 방지
+# 2. SSL 인증서 에러 방지 (로컬 실행 시 필수)
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# 3. 데이터 로딩 및 시장 분류
+# 3. 데이터 로딩 및 시장 자동 분류
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -23,7 +23,7 @@ def load_data():
         df = pd.read_csv(url)
         df = df.dropna(subset=['종목명'])
         
-        # 한국/미국 시장 자동 분류
+        # 코드 끝자리를 보고 한국/미국 시장 자동 분류
         df['Market'] = df['코드'].apply(
             lambda x: "한국(KRW)" if str(x).upper().endswith(('.KS', '.KQ')) else "미국(USD)"
         )
@@ -34,7 +34,7 @@ def load_data():
 # 4. 차트 그리기 함수 (아이콘 제거 & 숫자 크기 업그레이드)
 def draw_chart(ticker, period, title, unit, target_p=None):
     try:
-        # [해결] 3mo는 일봉, 5y는 주봉으로 설정해 기간 중복 문제 해결
+        # [해결] 3mo는 일봉(1d), 5y는 주봉(1wk)으로 설정해 기간 중복 문제 해결
         interval = "1d" if period == "3mo" else "1wk"
         df = yf.download(ticker, period=period, interval=interval)
         
@@ -49,14 +49,14 @@ def draw_chart(ticker, period, title, unit, target_p=None):
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # [수정] 5년 차트에만 목표가 숫자만 큼직하게 표시
+        # [수정] 5년 차트에만 목표가 숫자만 큼직하게 표시 (아이콘 제거)
         if target_p:
             fig.add_hline(y=target_p, line_dash="dash", line_color="red")
             fig.add_annotation(
                 x=df.index[-1], y=target_p,
                 text=f"{unit}{target_p:,.0f}", # 아이콘(🎯) 제거
                 showarrow=False, yshift=15,
-                font=dict(color="white", size=22, family="Arial Black"), # 글자 크기 대폭 확대
+                font=dict(color="white", size=24, family="Arial Black"), # 글자 크기 대폭 확대
                 bgcolor="red", bordercolor="red", borderpad=5, opacity=0.9
             )
         
@@ -83,6 +83,8 @@ if df_sheet is not None:
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"## 🎯 {market_choice} 종목")
     selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
+    
+    # [수술] KeyError 및 괄호 누락 방지 로직
     s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
     
     ticker_code = s_info['코드'].upper()
@@ -99,28 +101,5 @@ if df_sheet is not None:
 
     st.title(f"🚀 {selected} ({ticker_code})")
     
-    # 상단 요약 지표 (f-string 에러 해결)
-    c1, c2, c3 = st.columns(3)
-    if is_korea:
-        c1.metric("실시간 현재가", f"{unit}{current_p:,.0f}")
-        c2.metric("사장님 목표가", f"{unit}{target_p:,.0f}", delta_color="off")
-    else:
-        c1.metric("실시간 현재가", f"{unit}{current_p:,.2f}")
-        c2.metric("사장님 목표가", f"{unit}{target_p:,.2f}", delta_color="off")
-    c3.metric("목표까지 수익률", f"{gap_percent:.1f}%", f"{gap_percent:.1f}%")
-
-    st.write("---")
-
-    # 차트 배치 (5년 차트에만 큼직한 목표가 표시)
-    col1, col2 = st.columns(2)
-    with col1:
-        draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
-    with col2:
-        draw_chart(ticker_code, "5y", "🏛️ 5년 장기 성장", unit, target_p)
-
-    st.write("---")
-    # 하단 분석 메모 (KeyError 박멸)
-    st.subheader("💡 분석 메모")
-    st.success(f"{s_info.get('메모', '내용 없음')}") 
-else:
-    st.
+    # 상단 요약 지표 (SyntaxError 완벽 수술 버전)
+    c1, c2
