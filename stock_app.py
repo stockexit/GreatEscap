@@ -6,7 +6,7 @@ import ssl
 
 # 1. 화면 설정 (한국 시장 우선, 메뉴 상시 오픈)
 st.set_page_config(
-    page_title="사장님 투자 터미널", 
+    page_title="위대한탈출 가치평가 연구소", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
