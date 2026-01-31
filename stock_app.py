@@ -206,3 +206,54 @@ if df_sheet is not None:
             gap_min = ((t_min - current_p)/current_p)*100 if current_p else 0
             gap_max = ((t_max - current_p)/current_p)*100 if current_p else 0
             gap_buy = ((t_buy - current_p)/current_p)*100 if current_p else 0
+            
+            cagr_min = ((t_min/current_p)**(1/7)-1)*100 if current_p and t_min else 0
+            cagr_max = ((t_max/current_p)**(1/7)-1)*100 if current_p and t_max else 0
+        except:
+            current_p = 0; gap_min=gap_max=gap_buy=cagr_min=cagr_max=0
+
+        # --- 메인 화면 출력 ---
+        st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
+        
+        if 'dart_data' in st.session_state and is_korea:
+            st.markdown("### 📊 최근 10년 핵심 재무지표 (단위: 억원)")
+            st.dataframe(st.session_state['dart_data'], use_container_width=True)
+            if st.button("표 닫기"):
+                del st.session_state['dart_data']
+                st.rerun()
+            st.write("---")
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
+            st.markdown(f"""<div style="background-color: {badge_color}; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold;">{badge_icon} {badge_text}</div>""", unsafe_allow_html=True)
+        with c2: st.metric("⚡ 매수 가치", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
+        with c3: 
+            st.metric("🛡️ 보수적 적정가", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
+            if cagr_min: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_min:+.1f}%</div>", unsafe_allow_html=True)
+        with c4: 
+            st.metric("🚀 최대 미래가치", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
+            if cagr_max: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_max:+.1f}%</div>", unsafe_allow_html=True)
+
+        st.write("---")
+        col1, col2 = st.columns(2)
+        with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
+        with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, t_min, t_max, t_buy)
+
+        st.write("---")
+        st.subheader("📌 핵심 요약 (메모)")
+        st.info(s_info.get('메모', '메모 없음'))
+        
+        st.subheader("💡 심층 리포트")
+        note = s_info.get('노트링크', '')
+        if note and "docs.google.com" in str(note):
+            components.iframe(note.replace("/edit", "/preview"), height=800, scrolling=True)
+        elif s_info.get('이미지URL'):
+            st.image(s_info.get('이미지URL'), use_container_width=True)
+            if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
+        else:
+            st.text("등록된 리포트 없음")
+    else:
+        st.warning("종목 없음")
+else:
+    st.error("데이터 로딩 실패")
