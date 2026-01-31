@@ -45,20 +45,19 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # --- [수정됨] 현재가 라인 (3개월 차트용) ---
-        # 스타일 통일: 분홍색 배경 + 흰색 글씨 + 16px
+        # --- 현재가 라인 (3개월 차트용) ---
         if current_price and current_price > 0:
             fig.add_hline(y=current_price, line_dash="dot", line_color="#FF4081", line_width=1)
             fig.add_annotation(
                 xref="paper", 
-                x=0.5,               # 화면 중앙
+                x=0.5,               
                 y=current_price, 
                 text=f"<b>현재가 {unit}{current_price:,.0f}</b>", 
                 showarrow=False, 
                 xanchor="center",    
                 yshift=10,           
-                font=dict(color="white", size=16),   # [변경] 글씨 흰색 + 16px
-                bgcolor="#FF4081",                   # [변경] 배경을 라인색(분홍)으로 통일
+                font=dict(color="white", size=16),   
+                bgcolor="#FF4081",                   
                 bordercolor="white", borderwidth=1, opacity=0.9
             )
 
@@ -118,7 +117,7 @@ if df_sheet is not None:
         else:
             badge_color = "#616161"; badge_icon = "❔"; badge_text = "미지정"
 
-        # 가격 데이터 처리
+        # 데이터 계산
         try:
             ticker_obj = yf.Ticker(ticker_code)
             history = ticker_obj.history(period="1d")
@@ -131,21 +130,41 @@ if df_sheet is not None:
                 gap_min = ((t_min - current_p) / current_p) * 100
                 gap_max = ((t_max - current_p) / current_p) * 100
                 gap_buy = ((t_buy - current_p) / current_p) * 100
+                
+                # --- [NEW] 7년 연복리(CAGR) 계산 ---
+                if t_max > 0:
+                    cagr = ((t_max / current_p) ** (1/7) - 1) * 100
+                else:
+                    cagr = 0
             else:
-                gap_min, gap_max, gap_buy = 0, 0, 0
+                gap_min, gap_max, gap_buy, cagr = 0, 0, 0, 0
         except:
-            current_p, t_min, t_max, t_buy = 0, 0, 0, 0
+            current_p, t_min, t_max, t_buy, cagr = 0, 0, 0, 0, 0
             gap_min, gap_max, gap_buy = 0, 0, 0
 
         # 상단 지표 출력
         st.title(f"🚀 {selected} ({ticker_code}) 기업 가치")
         c1, c2, c3, c4 = st.columns(4)
+        
         with c1:
             st.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
             st.markdown(f"""<div style="background-color: {badge_color}; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; text-align: center; display: inline-block; margin-top: -15px; font-size: 0.9em;">{badge_icon} {badge_text}</div>""", unsafe_allow_html=True)
-        with c2: st.metric("⚡ 매수 가치 (안전마진)", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
-        with c3: st.metric("🛡️ 보수적 적정가 (안전)", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
-        with c4: st.metric("🚀 최대 미래가치 (목표)", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
+        
+        with c2: 
+            st.metric("⚡ 매수 가치 (안전마진)", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
+        
+        with c3: 
+            st.metric("🛡️ 보수적 적정가 (안전)", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
+        
+        # [NEW] 7년 연복리 배지 추가
+        with c4: 
+            st.metric("🚀 최대 미래가치 (목표)", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
+            if cagr != 0:
+                st.markdown(f"""
+                    <div style="background-color: #7B1FA2; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; text-align: center; display: inline-block; margin-top: -15px; font-size: 0.9em;">
+                        📈 7년 연복리 {cagr:+.1f}%
+                    </div>
+                """, unsafe_allow_html=True)
 
         st.write("---")
 
