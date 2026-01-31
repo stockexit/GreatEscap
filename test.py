@@ -3,31 +3,24 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 
-# 1. 화면 설정 (사이드바를 처음부터 펼쳐서 고정)
+# 1. 화면 설정 (사이드바 메뉴를 처음부터 열어둡니다)
 st.set_page_config(
     page_title="사장님 투자 터미널", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
 
-# 2. [정밀 수술] 순정 상태를 유지하며 지저분한 요소만 최소한으로 제거
+# 2. [완전 순정] 메뉴 버튼을 살리기 위해 헤더 가리기 기능을 뺐습니다.
 st.markdown("""
     <style>
-    /* 하단 푸터와 툴바만 제거 */
     footer {visibility: hidden;}
     div[data-testid="stToolbar"] {visibility: hidden !important;}
-    
-    /* 헤더는 숨기지 않고 배경만 투명하게 해서 '모바일 메뉴 버튼'만 남김 */
-    header[data-testid="stHeader"] {
-        background-color: rgba(0,0,0,0);
-    }
-    
-    /* 사이드바 너비 고정 및 가독성 향상 */
-    [data-testid="stSidebar"] { min-width: 260px; max-width: 260px; }
+    /* 사이드바 가독성 향상 */
+    [data-testid="stSidebar"] { min-width: 260px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3. 구글 시트 데이터 로드
+# 3. 구글 시트 연결
 sheet_url = "https://docs.google.com/spreadsheets/d/1FHEblKL20VNpqdhnGu2FK7UY4ueMS3JSEwiZUEqDtaw/edit?usp=sharing"
 url = sheet_url.split("/edit")[0] + "/export?format=csv"
 
@@ -41,17 +34,15 @@ def load_data(csv_url):
 
 df_sheet = load_data(url)
 
-# 4. 차트 그리기 함수 (SyntaxError 모든 지점 완벽 수술)
+# 4. 차트 그리기 함수 (SyntaxError 완벽 수술 완료)
 def draw_chart(ticker, period, title):
     try:
-        # try-except 구조 완성
         interval = "1wk" if period == "5y" else "1d"
         df = yf.download(ticker, period=period, interval=interval)
         
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
-        # 괄호 닫기 확인
         if df.empty:
             return st.write(f"⚠️ {title}: 데이터를 찾을 수 없습니다.")
 
@@ -60,7 +51,6 @@ def draw_chart(ticker, period, title):
             low=df['Low'], close=df['Close'], name=title
         )])
 
-        # 문자열 마감 완벽 체크
         fig.update_layout(
             title=dict(text=title, font=dict(size=18)),
             height=500, 
@@ -70,10 +60,10 @@ def draw_chart(ticker, period, title):
             yaxis_type="log" if period == "5y" else "linear"
         )
         return st.plotly_chart(fig, use_container_width=True)
-    except:
-        return st.error(f"⚠️ {title}: 데이터 로드 실패")
+    except Exception as e:
+        return st.error(f"차트 로드 실패: {e}")
 
-# 5. 메인 로직 실행
+# 5. 메인 로직 (NameError 방지를 위해 모든 출력을 이 안에 넣음)
 if df_sheet is not None and not df_sheet.empty:
     # 사이드바 종목 선택
     st.sidebar.markdown("## 🎯 분석 종목 리스트")
@@ -89,7 +79,7 @@ if df_sheet is not None and not df_sheet.empty:
     # 메인 화면 구성
     st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
 
-    # 함수 호출 괄호 완벽 마감
+    # 차트 배치 (PC 가로, 모바일 세로 자동 전환)
     col1, col2 = st.columns(2)
     with col1:
         draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
@@ -98,12 +88,11 @@ if df_sheet is not None and not df_sheet.empty:
 
     st.write("---")
 
-    # 변수 정의를 로직 안으로 이동
+    # 하단 정보 리포트
     c_a, c_b = st.columns([1, 2])
     with c_a:
         st.metric("사장님 목표가", f"{s_info['적정가']}")
     with c_b:
-        # 중괄호 마감 확인
         st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
 else:
-    st.error("데이터 로딩 실패! 구글 시트 설정을 확인해주세요.")
+    st.error("데이터 로딩 실패! 구글 시트 주소나 공유 설정을 확인해주세요.")
