@@ -4,27 +4,35 @@ import pandas as pd
 import plotly.graph_objects as go
 import ssl
 
-# 1. 화면 설정 (사이드바 메뉴 상시 오픈)
+# 1. 화면 설정 (PC 접속 시 메뉴를 기본으로 펼쳐둡니다)
 st.set_page_config(
     page_title="사장님 투자 터미널", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
 
-# 2. SSL 인증서 에러 방지 (로컬 실행 시 필수)
+# 2. SSL 인증서 에러 방지 (로컬 VS Code 실행 시 필수)
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# 3. 메뉴 아이콘(>) 보호 및 불필요 요소 제거
+# 3. [핵심 수술] 메뉴 버튼(>)을 살리고 지저분한 요소만 제거하는 CSS
 st.markdown("""
     <style>
+    /* 하단 푸터와 툴바 제거 */
     footer {visibility: hidden;}
     div[data-testid="stToolbar"] {visibility: hidden !important;}
-    header[data-testid="stHeader"] { background-color: rgba(0,0,0,0); }
-    [data-testid="stSidebar"] { min-width: 260px; }
+    
+    /* 헤더 영역을 투명하게 해서 모바일 메뉴 버튼 아이콘(>)이 보이게 함 */
+    header[data-testid="stHeader"] {
+        background-color: rgba(0,0,0,0) !important;
+        visibility: visible !important;
+    }
+    
+    /* 사이드바 너비 고정 및 가독성 향상 */
+    [data-testid="stSidebar"] { min-width: 260px; max-width: 260px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 4. 데이터 로드 (에러 방지용 정밀 필터링)
+# 4. 데이터 로드 함수
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -33,12 +41,12 @@ def load_data():
         df = pd.read_csv(url)
         return df.dropna(subset=['종목명'])
     except Exception as e:
-        st.error(f"데이터를 가져오지 못했습니다: {e}")
+        st.error(f"데이터 로딩 에러: {e}")
         return None
 
 df_sheet = load_data()
 
-# 5. 차트 그리기 함수 (SyntaxError 완벽 수술)
+# 5. 차트 그리기 함수 (SyntaxError 모든 지점 완벽 수술)
 def draw_chart(ticker, period, title):
     try:
         interval = "1wk" if period == "5y" else "1d"
@@ -48,7 +56,7 @@ def draw_chart(ticker, period, title):
             df.columns = df.columns.get_level_values(0)
             
         if df.empty:
-            return st.warning(f"⚠️ {title}: 데이터 없음")
+            return st.warning(f"⚠️ {title}: 데이터를 찾을 수 없습니다.")
 
         fig = go.Figure(data=[go.Candlestick(
             x=df.index, open=df['Open'], high=df['High'], 
@@ -66,17 +74,20 @@ def draw_chart(ticker, period, title):
     except Exception as e:
         return st.error(f"차트 로드 실패: {e}")
 
-# 6. 메인 로직 (NameError 방지를 위해 모든 변수를 안전하게 정의)
+# 6. 메인 화면 로직 (NameError 방지를 위해 변수 사용 순서 엄수)
 if df_sheet is not None and not df_sheet.empty:
-    # 사이드바 메뉴
+    # 사이드바: 종목 선택 메뉴
     st.sidebar.markdown("## 🎯 분석 종목 리스트")
+    st.sidebar.write("---")
+    
     stock_names = df_sheet['종목명'].unique().tolist()
     selected = st.sidebar.selectbox("종목을 고르세요 👇", stock_names)
-    
-    # 선택된 종목 정보
     s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
     
-    # 메인 화면 구성
+    st.sidebar.write("---")
+    st.sidebar.success(f"현재 분석: **{selected}**")
+
+    # 메인 화면: 제목 및 차트
     st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
 
     col1, col2 = st.columns(2)
@@ -94,4 +105,4 @@ if df_sheet is not None and not df_sheet.empty:
     with c_b:
         st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
 else:
-    st.error("구글 시트 데이터를 읽을 수 없습니다. 주소를 확인해주세요.")
+    st.error("구글 시트 데이터를 읽을 수 없습니다.")
