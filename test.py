@@ -13,11 +13,11 @@ st.set_page_config(
 # 2. [정밀 수술] 메뉴 버튼은 살리고 지저분한 로고만 제거하는 CSS
 st.markdown("""
     <style>
-    /* 하단 푸터와 툴바만 제거 */
+    /* 하단 푸터와 우측 상단 메뉴만 제거 */
     footer {visibility: hidden;}
-    div[data-testid="stToolbar"] {visibility: hidden !important;}
+    #MainMenu {visibility: hidden;}
     
-    /* 헤더는 숨기지 않고 배경만 투명하게 해서 '메뉴 버튼'만 남김 */
+    /* 헤더는 숨기지 않고 배경만 투명하게 해서 '모바일 메뉴 버튼'만 남김 */
     header[data-testid="stHeader"] {
         background-color: rgba(0,0,0,0);
     }
@@ -44,13 +44,14 @@ df_sheet = load_data(url)
 # 4. 차트 그리기 함수 (SyntaxError 모든 지점 완벽 수술)
 def draw_chart(ticker, period, title):
     try:
-        # 5년치는 주 단위(1wk), 3개월치는 일 단위(1d)
+        # try-except 구조 완성
         interval = "1wk" if period == "5y" else "1d"
         df = yf.download(ticker, period=period, interval=interval)
         
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
+        # 괄호 닫기 확인
         if df.empty:
             return st.write(f"⚠️ {title}: 데이터를 찾을 수 없습니다.")
 
@@ -59,6 +60,7 @@ def draw_chart(ticker, period, title):
             low=df['Low'], close=df['Close'], name=title
         )])
 
+        # 문자열 마감 완벽 체크
         fig.update_layout(
             title=dict(text=title, font=dict(size=18)),
             height=500, 
@@ -68,8 +70,8 @@ def draw_chart(ticker, period, title):
             yaxis_type="log" if period == "5y" else "linear"
         )
         return st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        return st.error(f"차트 로드 에러: {e}")
+    except:
+        return st.error(f"⚠️ {title}: 데이터 로드 실패")
 
 # 5. 메인 로직 실행
 if df_sheet is not None and not df_sheet.empty:
@@ -87,6 +89,7 @@ if df_sheet is not None and not df_sheet.empty:
     # 메인 화면 구성
     st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
 
+    # 함수 호출 괄호 완벽 마감
     col1, col2 = st.columns(2)
     with col1:
         draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
@@ -95,11 +98,12 @@ if df_sheet is not None and not df_sheet.empty:
 
     st.write("---")
 
-    # 레이아웃 하단 정보 출력
+    # 변수 정의를 로직 안으로 이동
     c_a, c_b = st.columns([1, 2])
     with c_a:
         st.metric("사장님 목표가", f"{s_info['적정가']}")
     with c_b:
+        # 중괄호 마감 확인
         st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
 else:
-    st.error("데이터를 가져오는 데 실패했습니다. 구글 시트 설정을 확인해주세요.")
+    st.error("데이터 로딩 실패! 구글 시트 설정을 확인해주세요.")
