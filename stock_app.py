@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import ssl
 import OpenDartReader
 import time
-import re # 정규표현식 사용
+import re 
 
 # 1. 화면 설정
 st.set_page_config(
@@ -31,7 +31,7 @@ def load_data():
     except:
         return None
 
-# 4. [수정됨] DART 데이터 수집 함수 (fs_div 에러 방지)
+# 4. [최종 수정] DART 데이터 수집 함수 (모든 에러 방어)
 def fetch_dart_data(api_key, ticker_code, stock_name):
     try:
         dart = OpenDartReader(api_key)
@@ -55,20 +55,30 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
             my_bar.progress(percent, text=f"{year}년도 데이터 수집 중... ({percent}%)")
             
             # 데이터 요청
-            df = dart.finstate(ticker_code, year, reprt_code='11011')
-            
+            try:
+                df = dart.finstate(ticker_code, year, reprt_code='11011')
+            except:
+                df = None
+
             if df is not None:
-                # --- [수정된 부분] fs_div 컬럼이 있을 때만 필터링 ---
+                # -------------------------------------------------------
+                # [에러 방지 1] 핵심 컬럼(account_nm)이 없으면 이 해는 건너뜀
+                # -------------------------------------------------------
+                if 'account_nm' not in df.columns:
+                    continue 
+
+                # -------------------------------------------------------
+                # [에러 방지 2] fs_div(연결/별도 구분) 처리
+                # -------------------------------------------------------
                 if 'fs_div' in df.columns:
-                    # 연결(CFS)이 있으면 연결을 쓰고, 없으면 그냥 둠
                     if 'CFS' in df['fs_div'].values:
                         df = df[df['fs_div'] == 'CFS']
-                    # 만약 연결이 없고 별도(OFS)만 있다면 별도를 씀 (선택사항)
                     elif 'OFS' in df['fs_div'].values:
                         df = df[df['fs_div'] == 'OFS']
                 
                 df['Year'] = year
                 
+                # 필터링 로직
                 cond_sales = df['account_nm'].str.contains('매출액|영업수익') & ~df['account_nm'].str.contains('원가')
                 cond_op = df['account_nm'].str.contains('영업이익')
                 cond_net = df['account_nm'].str.contains('당기순이익') & ~df['account_nm'].str.contains('포괄|지배|비지배')
@@ -84,11 +94,17 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
 
         if financial_list:
             df_final = pd.concat(financial_list)
-            # 숫자 변환 (콤마 제거)
-            df_final['thstrm_amount'] = df_final['thstrm_amount'].astype(str).str.replace(',', '').astype(float)
+            
+            # 숫자 변환 (에러 방지: 문자가 섞여 있어도 강제로 처리)
+            def clean_number(x):
+                try:
+                    return float(str(x).replace(',', ''))
+                except:
+                    return 0
+            
+            df_final['thstrm_amount'] = df_final['thstrm_amount'].apply(clean_number)
             df_clean = df_final[['Year', 'account_nm', 'thstrm_amount']]
             
-            # 피벗
             df_pivot = df_clean.pivot_table(index='Year', columns='account_nm', values='thstrm_amount', aggfunc='sum')
             df_pivot = df_pivot / 100000000 # 억 단위
             df_pivot = df_pivot.round(0)
@@ -98,7 +114,7 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
             
             return df_pivot, f"성공! '{file_name}' 저장 완료"
         else:
-            return None, "데이터를 찾지 못했습니다."
+            return None, "수집된 데이터가 없거나, DART에 표준 재무제표가 없는 종목입니다."
 
     except Exception as e:
         return None, f"에러 발생: {e}"
