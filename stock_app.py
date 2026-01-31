@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components 
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
@@ -50,7 +51,7 @@ def load_data():
         return None
 
 # ---------------------------------------------------------
-# [정렬 엔진] 재무제표 표준 순서 정렬
+# [정렬 엔진 1] 계정 과목(행) 정렬
 # ---------------------------------------------------------
 def sort_financial_accounts(df, report_type):
     if '손익' in report_type or '포괄' in report_type:
@@ -81,8 +82,14 @@ def sort_financial_accounts(df, report_type):
     elif '현금' in report_type:
         order_list = [
             '영업활동현금흐름', '영업활동으로인한현금흐름',
+            '당기순이익', '당기순이익(손실)', # 현금흐름표 시작점
+            '감가상각비',
+            '운전자본의변동', '자산부채의변동',
             '투자활동현금흐름', '투자활동으로인한현금흐름',
+            '유형자산의취득', '유형자산의처분',
             '재무활동현금흐름', '재무활동으로인한현금흐름',
+            '차입금의증가', '차입금의감소', '배당금지급',
+            '현금의증가', '현금의감소',
             '기초현금및현금성자산', '기말현금및현금성자산'
         ]
     else:
@@ -101,8 +108,25 @@ def sort_financial_accounts(df, report_type):
             
     return df.reindex(sorted_index)
 
+# ---------------------------------------------------------
+# [정렬 엔진 2] 표 종류(드롭다운 메뉴) 정렬
+# ---------------------------------------------------------
+def sort_report_types(options):
+    # 우리가 원하는 순서
+    priority = ['포괄손익계산서', '손익계산서', '재무상태표', '현금흐름표']
+    
+    # 순서 매기기 함수
+    def get_priority(name):
+        for i, key in enumerate(priority):
+            if key in name:
+                return i
+        return 99 # 목록에 없으면 맨 뒤로
 
-# 4. [수정됨] DART 데이터 수집 함수 (분기/연간 지원)
+    # 정렬 실행
+    return sorted(options, key=get_priority)
+
+
+# 4. DART 데이터 수집 함수
 @st.cache_data(show_spinner=False) 
 def fetch_all_financials(api_key, ticker_code, mode="연간"):
     try:
@@ -115,14 +139,11 @@ def fetch_all_financials(api_key, ticker_code, mode="연간"):
 
     now_year = datetime.datetime.now().year
     
-    # [설정] 연간 vs 분기
     if mode == "연간":
-        # 연간: 11011 (사업보고서)만 / 최근 5년
         target_codes = ['11011']
         years = range(now_year - 5, now_year + 1)
         code_map = {'11011': '연간'}
     else:
-        # 분기: 11013(1Q), 11012(반기), 11014(3Q), 11011(4Q/연간) / 최근 3년 (너무 느려짐 방지)
         target_codes = ['11013', '11012', '11014', '11011']
         years = range(now_year - 3, now_year + 1)
         code_map = {
@@ -139,8 +160,6 @@ def fetch_all_financials(api_key, ticker_code, mode="연간"):
         for year in years:
             for code in target_codes:
                 label = code_map[code]
-                
-                # 진행상황 표시 (너무 빠르면 안 보일 수 있음)
                 if mode == "분기":
                     status_text.text(f"📥 {year}년 {label} 데이터 찾는 중...")
                 else:
@@ -152,34 +171,27 @@ def fetch_all_financials(api_key, ticker_code, mode="연간"):
                     df = None
 
                 if df is not None:
-                    # [중요] 컬럼명을 'Year' 대신 'Period'로 만들어서 (2023.1Q) 형식으로 저장
                     if mode == "연간":
                         period_name = str(year)
                     else:
-                        period_name = f"{str(year)[2:]}.{label}" # 예: 23.1Q, 23.4Q(연간)
+                        period_name = f"{str(year)[2:]}.{label}"
 
                     df['Period'] = period_name
-                    
-                    # 필요한 컬럼만
                     cols = ['Period', 'fs_div', 'sj_nm', 'account_nm', 'thstrm_amount']
                     valid_cols = [c for c in cols if c in df.columns]
                     all_data_list.append(df[valid_cols])
                 
-                # 서버 부하 방지 딜레이
                 time.sleep(0.15)
 
         status_text.empty()
 
         if all_data_list:
             df_final = pd.concat(all_data_list)
-            
-            # 숫자 변환
             def clean_number(x):
                 try:
                     return float(str(x).replace(',', ''))
                 except:
                     return 0
-            
             df_final['thstrm_amount'] = df_final['thstrm_amount'].apply(clean_number)
             return df_final, "OK"
         else:
@@ -309,74 +321,71 @@ if df_sheet is not None:
                 st.image(s_info.get('이미지URL'), use_container_width=True)
                 if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
 
-        # --- [탭 2] 재무제표 (분기 지원 업데이트) ---
         with tab2:
             if not is_korea:
                 st.info("미국 주식은 지원하지 않습니다.")
             else:
                 DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
 
-                # --- [UI] 컨트롤 패널 ---
-                col_ui1, col_ui2, col_ui3 = st.columns([1, 1, 2])
+                with st.spinner(f"📊 {selected} 재무 데이터 불러오는 중..."):
+                    raw_df, msg = fetch_all_financials(DART_API_KEY, dart_code, "분기" if "분기" in locals().get('period_mode', '') else "연간")
                 
-                with col_ui1:
-                    fs_mode = st.radio("기준", ["연결", "별도"], horizontal=True, index=0)
-                    fs_code = 'CFS' if fs_mode == "연결" else 'OFS'
+                if raw_df is not None:
+                    col_ui1, col_ui2, col_ui3 = st.columns([1, 1, 2])
+                    
+                    with col_ui1:
+                        fs_mode = st.radio("기준", ["연결", "별도"], horizontal=True, index=0)
+                        fs_code = 'CFS' if fs_mode == "연결" else 'OFS'
 
-                with col_ui2:
-                    # 이제 분기를 누르면 실제 분기 로직이 돌아갑니다!
-                    period_mode = st.radio("기간", ["연간", "분기"], horizontal=True, index=0)
+                    with col_ui2:
+                        period_mode = st.radio("기간", ["연간", "분기"], horizontal=True, index=0)
+                        # 모드 변경 시 데이터 다시 불러오기 (Streamlit 리렌더링)
+                        if 'current_mode' not in st.session_state:
+                            st.session_state.current_mode = "연간"
+                        
+                        if st.session_state.current_mode != period_mode:
+                            st.session_state.current_mode = period_mode
+                            st.rerun()
 
-                # 선택된 기간 모드에 따라 데이터 가져오기
-                with st.spinner(f"📊 {selected} ({period_mode}) 데이터 수집 중... (시간이 좀 걸립니다)"):
-                    # key를 달아서 모드가 바뀔 때마다 함수를 새로 실행하게 유도
-                    raw_df, msg = fetch_all_financials(DART_API_KEY, dart_code, period_mode)
+                    with col_ui3:
+                        # [핵심] 표 종류 정렬해서 보여주기
+                        raw_options = raw_df['sj_nm'].unique()
+                        sorted_options = sort_report_types(raw_options) # 정렬 함수 적용
+                        selected_sj = st.selectbox("표 종류", sorted_options, index=0) # 첫 번째(손익)가 기본
 
-                with col_ui3:
-                    if raw_df is not None:
-                        sj_options = raw_df['sj_nm'].unique()
-                        default_sj_idx = 0
-                        for i, opt in enumerate(sj_options):
-                            if '손익' in opt:
-                                default_sj_idx = i
-                                break
-                        selected_sj = st.selectbox("표 종류", sj_options, index=default_sj_idx)
-                    else:
-                        selected_sj = None
+                    st.markdown("---")
 
-                st.markdown("---")
-
-                if raw_df is not None and selected_sj:
+                    if period_mode != "연간" and st.session_state.current_mode == "연간":
+                         # 데이터 싱크 맞추기 위해 한번 더 리로드 체크
+                         st.rerun()
+                         
                     # 1. 필터링
                     mask = (raw_df['fs_div'] == fs_code) & (raw_df['sj_nm'] == selected_sj)
                     filtered_df = raw_df[mask].copy()
                     
                     if not filtered_df.empty:
-                        # Period(기간) 컬럼을 기준으로 피벗합니다.
                         filtered_df = filtered_df.drop_duplicates(subset=['account_nm', 'Period'])
                         pivot_df = filtered_df.pivot(index='account_nm', columns='Period', values='thstrm_amount')
                         
-                        # 단위 변환
                         pivot_df = pivot_df / 100000000
                         pivot_df = pivot_df.round(0)
                         
-                        # 2. 열 정렬 (최신이 왼쪽)
+                        # 2. 열 정렬 (최신 왼쪽)
                         cols = sorted(pivot_df.columns, reverse=True)
                         pivot_df = pivot_df[cols]
                         
-                        # 3. 행 정렬 (표준 순서)
+                        # 3. 행 정렬 (계정 과목 순서)
                         pivot_df = sort_financial_accounts(pivot_df, selected_sj)
 
-                        # --- [출력] ---
                         st.markdown(f"#### 📊 {selected_sj} (단위: 억원)")
                         st.dataframe(pivot_df, use_container_width=True, height=800)
                         
                         csv = pivot_df.to_csv().encode('utf-8-sig')
-                        st.download_button("💾 엑셀 다운로드", csv, f"{selected}_{selected_sj}_{period_mode}.csv", "text/csv")
+                        st.download_button("💾 엑셀 다운로드", csv, f"{selected}_{selected_sj}.csv", "text/csv")
                         
                     else:
-                        st.warning("선택하신 조건의 데이터가 없습니다.")
-                elif raw_df is None:
+                        st.warning(f"선택하신 '{selected_sj}' 데이터가 '{fs_mode}' 기준으로는 없습니다. (별도/연결을 변경해보세요)")
+                else:
                     st.error(f"데이터를 가져오지 못했습니다. ({msg})")
 
     else:
