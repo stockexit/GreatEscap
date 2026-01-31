@@ -21,11 +21,17 @@ def load_data():
         sheet_url = "https://docs.google.com/spreadsheets/d/1FHEblKL20VNpqdhnGu2FK7UY4ueMS3JSEwiZUEqDtaw/edit?usp=sharing"
         url = sheet_url.split("/edit")[0] + "/export?format=csv"
         df = pd.read_csv(url)
-        return df.dropna(subset=['종목명'])
+        df = df.dropna(subset=['종목명'])
+        
+        # [신규] 종목별 시장 분류 로직 추가
+        df['Market'] = df['코드'].apply(
+            lambda x: "한국(KRW)" if str(x).upper().endswith(('.KS', '.KQ')) else "미국(USD)"
+        )
+        return df
     except:
         return None
 
-# 4. 차트 그리기 함수 (따옴표 및 콜론 수술 완료)
+# 4. 차트 그리기 함수
 def draw_chart(ticker, period, title, unit):
     try:
         interval = "1wk" if period == "5y" else "1d"
@@ -52,16 +58,22 @@ def draw_chart(ticker, period, title, unit):
 df_sheet = load_data()
 
 if df_sheet is not None:
-    # 사이드바 (따옴표 에러 수술 완료)
-    st.sidebar.markdown("## 🎯 분석 종목 리스트")
-    selected = st.sidebar.selectbox("종목 선택 👇", df_sheet['종목명'].unique())
-    s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
+    # 사이드바: 1단계 시장 선택
+    st.sidebar.markdown("## 🌍 시장 선택")
+    market_choice = st.sidebar.radio("보고 싶은 시장을 골라주세요", ["미국(USD)", "한국(KRW)"])
     
-    # [핵심] 통화 구분 및 기호 설정
+    # 2단계: 선택한 시장의 종목만 필터링
+    filtered_df = df_sheet[df_sheet['Market'] == market_choice]
+    
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"## 🎯 {market_choice} 종목")
+    selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
+    s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
+    
+    # 통화 기호 설정 (이전 버전 유지)
     ticker_code = s_info['코드'].upper()
-    is_korea = ticker_code.endswith('.KS') or ticker_code.endswith('.KQ')
+    is_korea = market_choice == "한국(KRW)"
     unit = "₩" if is_korea else "$"
-    # 원화는 소수점 없이, 달러는 소수점 2자리까지 표시
     fmt = ",.0f" if is_korea else ",.2f"
     
     try:
@@ -74,7 +86,7 @@ if df_sheet is not None:
 
     st.title(f"🚀 {selected} ({ticker_code})")
     
-    # 상단 요약 지표 (SyntaxError 수술 완료)
+    # 상단 요약 지표
     c1, c2, c3 = st.columns(3)
     c1.metric("실시간 현재가", f"{unit}{current_p:{fmt}}")
     c2.metric("사장님 목표가", f"{unit}{target_p:{fmt}}", delta_color="off")
@@ -82,7 +94,7 @@ if df_sheet is not None:
 
     st.write("---")
 
-    # 차트 배치 (콜론 수술 완료)
+    # 차트 배치
     col1, col2 = st.columns(2)
     with col1:
         draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
@@ -90,6 +102,8 @@ if df_sheet is not None:
         draw_chart(ticker_code, "5y", "🏛️ 5년 장기 성장", unit)
 
     st.write("---")
-    # 하단 분석 메모 ('메메' 에러 영구 박멸)
+    # 하단 분석 메모
     st.subheader("💡 분석 메모")
-    st.success(f"{s_info['메모']}")
+    st.success(f"{s_info['메모']}") 
+else:
+    st.error("데이터 로딩 실패! 구글 시트 연결을 확인하세요.")
