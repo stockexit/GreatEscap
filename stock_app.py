@@ -22,7 +22,7 @@ def load_data():
         # 구글 시트 URL을 CSV 다운로드 링크로 변환
         url = sheet_url.split("/edit")[0] + "/export?format=csv"
         df = pd.read_csv(url)
-        df = df.dropna(subset=['기업명'])
+        df = df.dropna(subset=['종목명'])
         
         # 코드 끝자리를 보고 한국/미국 시장 자동 분류
         df['Market'] = df['코드'].apply(
