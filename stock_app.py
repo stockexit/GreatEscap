@@ -112,17 +112,17 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
 df_sheet = load_data()
 
 if df_sheet is not None:
-    # 사이드바: 시장 및 종목 선택
+    # 사이드바: 시장 및 기업 선택
     st.sidebar.markdown("## 🌍 시장 선택")
     market_choice = st.sidebar.radio("보고 싶은 시장", ["한국(KRW)", "미국(USD)"])
     
     filtered_df = df_sheet[df_sheet['Market'] == market_choice]
     
     st.sidebar.markdown("---")
-    st.sidebar.markdown(f"## 🎯 {market_choice} 종목")
+    st.sidebar.markdown(f"## 🎯 {market_choice} 기업")
     
     if not filtered_df.empty:
-        selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
+        selected = st.sidebar.selectbox("기업 선택 👇", filtered_df['종목명'].unique())
         s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
         
         # 기본 정보 설정
