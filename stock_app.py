@@ -15,9 +15,12 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# 스타일 설정
+# ---------------------------------------------------------
+# [스타일] 탭 & 표 디자인
+# ---------------------------------------------------------
 st.markdown("""
 <style>
+    button[data-baseweb="tab"] div p { font-size: 20px !important; font-weight: bold !important; }
     thead tr th { background-color: #f5f6f7 !important; color: #333 !important; font-weight: bold !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -39,10 +42,10 @@ def load_data():
         return None
 
 # ---------------------------------------------------------
-# [핵심] EPS만 10년치 뽑아오는 함수 (초간단 버전)
+# [핵심] 10년치 당기순이익만 뽑아오는 함수
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False) 
-def fetch_eps_history(api_key, ticker_code):
+def fetch_net_income_history(api_key, ticker_code):
     try:
         dart = OpenDartReader(api_key)
     except Exception as e:
@@ -55,12 +58,12 @@ def fetch_eps_history(api_key, ticker_code):
     # 10년치 (현재-10년 ~ 현재)
     years = range(now_year - 10, now_year + 1) 
     
-    eps_data = []
+    income_data = []
     status_text = st.empty()
     
     try:
         for year in years:
-            status_text.text(f"🔍 {year}년 EPS 찾는 중...")
+            status_text.text(f"🔍 {year}년 당기순이익 찾는 중...")
             try:
                 # 11011: 사업보고서 (1년 확정치)
                 df = dart.finstate(ticker_code, year, reprt_code='11011')
@@ -68,9 +71,9 @@ def fetch_eps_history(api_key, ticker_code):
                 df = None
 
             if df is not None:
-                # 1. '기본주당이익' 글자가 들어간 행 찾기
-                # (보통 '기본주당이익' 또는 '기본주당순이익' 이라고 적혀있음)
-                mask = df['account_nm'].str.contains('기본주당', na=False) & df['account_nm'].str.contains('이익', na=False)
+                # 1. '당기순이익' 글자가 들어간 행 찾기 (포괄손익 제외)
+                mask = df['account_nm'].str.contains('당기순이익', na=False) & ~df['account_nm'].str.contains('포괄', na=False) & ~df['account_nm'].str.contains('지배', na=False) & ~df['account_nm'].str.contains('비지배', na=False)
+                
                 target_row = df[mask]
                 
                 if not target_row.empty:
@@ -80,26 +83,33 @@ def fetch_eps_history(api_key, ticker_code):
                         val_row = target_row[target_row['fs_div'] == 'OFS']
                     
                     if not val_row.empty:
+                        # 3. 여러개 잡힐 경우 첫번째 것 사용 (보통 가장 상위 항목)
                         amount_str = str(val_row.iloc[0]['thstrm_amount'])
                         try:
-                            # 콤마 제거하고 숫자로 변환
-                            eps_val = float(amount_str.replace(',', ''))
+                            # 억 단위 변환을 위해 일단 float로
+                            income_val = float(amount_str.replace(',', ''))
                         except:
-                            eps_val = 0
+                            income_val = 0
                         
-                        eps_data.append({
-                            'Year': str(year),
-                            'EPS': eps_val
+                        income_data.append({
+                            '연도': str(year),
+                            '당기순이익': income_val
                         })
             
-            time.sleep(0.1) # 서버 예의 지키기
+            time.sleep(0.1) 
 
         status_text.empty()
 
-        if eps_data:
-            df_final = pd.DataFrame(eps_data)
+        if income_data:
+            df_final = pd.DataFrame(income_data)
+            
+            # 단위 변환 (원 -> 억원)
+            df_final['당기순이익(억)'] = df_final['당기순이익'] / 100000000
+            df_final['당기순이익(억)'] = df_final['당기순이익(억)'].round(0)
+            
             # 표 모양 만들기 (가로로 연도 나열)
-            df_pivot = df_final.set_index('Year').T 
+            # 인덱스: 항목명, 컬럼: 연도
+            df_pivot = df_final[['연도', '당기순이익(억)']].set_index('연도').T
             
             # 최신 연도가 왼쪽으로 오게 정렬
             cols = sorted(df_pivot.columns, reverse=True)
@@ -107,7 +117,7 @@ def fetch_eps_history(api_key, ticker_code):
             
             return df_pivot, "OK"
         else:
-            return None, "EPS 데이터를 찾지 못했습니다."
+            return None, "당기순이익 데이터를 찾지 못했습니다."
 
     except Exception as e:
         status_text.empty()
@@ -176,6 +186,8 @@ if df_sheet is not None:
             gap_min = ((t_min - current_p)/current_p)*100 if current_p else 0
             gap_max = ((t_max - current_p)/current_p)*100 if current_p else 0
             gap_buy = ((t_buy - current_p)/current_p)*100 if current_p else 0
+            cagr_min = ((t_min/current_p)**(1/7)-1)*100 if current_p and t_min else 0
+            cagr_max = ((t_max/current_p)**(1/7)-1)*100 if current_p and t_max else 0
             
             grade = s_info.get('투자등급', '미분류') 
             badge_color = {"코어": "#2962FF", "위성": "#FFAB00", "시가존": "#2E7D32"}.get(grade, "#616161")
@@ -183,68 +195,86 @@ if df_sheet is not None:
             badge_text = {"코어": "CORE", "위성": "SATELLITE", "시가존": "시가존"}.get(grade, "미지정")
             
         except:
-            current_p = 0; gap_min=gap_max=gap_buy=0
+            current_p = 0; gap_min=gap_max=gap_buy=cagr_min=cagr_max=0
 
         st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
 
-        # 탭 없이 심플하게 구성
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
-            st.markdown(f"""<div style="background-color: {badge_color}; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold;">{badge_icon} {badge_text}</div>""", unsafe_allow_html=True)
-        with c2: st.metric("⚡ 매수 가치", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
-        with c3: st.metric("🛡️ 보수적 적정가", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
-        with c4: st.metric("🚀 최대 미래가치", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
+        # ==========================================
+        # [NEW] 탭 부활 (대시보드 / 가치분석)
+        # ==========================================
+        tab1, tab2 = st.tabs(["🚀 종목 대시보드", "💎 가치분석 (10년 이익)"])
 
-        st.write("---")
-        
         # ----------------------------------------------------
-        # [NEW] EPS 10년치 섹션
+        # [탭 1] 대시보드 (기존 화면)
         # ----------------------------------------------------
-        st.subheader("📊 지난 10년 EPS(주당순이익) 추이")
-        
-        if not is_korea:
-            st.info("미국 주식은 지원하지 않습니다.")
-        else:
-            DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
-            
-            # 버튼 없이 자동 로딩 (스피너만 표시)
-            with st.spinner(f"{selected} 10년치 EPS 찾는 중..."):
-                eps_df, msg = fetch_eps_history(DART_API_KEY, dart_code)
-            
-            if eps_df is not None:
-                # 1. 표 보여주기
-                st.dataframe(eps_df.style.format("{:,.0f}"), use_container_width=True)
-                
-                # 2. 바 차트 보여주기 (시각화)
-                # 데이터 전처리 for Chart
-                chart_df = eps_df.T.reset_index() # 연도를 행으로
-                chart_df.columns = ['Year', 'EPS']
-                chart_df = chart_df.sort_values('Year') # 차트는 과거->최신 순이 이쁨
+        with tab1:
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
+                st.markdown(f"""<div style="background-color: {badge_color}; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold;">{badge_icon} {badge_text}</div>""", unsafe_allow_html=True)
+            with c2: st.metric("⚡ 매수 가치", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
+            with c3: 
+                st.metric("🛡️ 보수적 적정가", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
+                if cagr_min: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_min:+.1f}%</div>", unsafe_allow_html=True)
+            with c4: 
+                st.metric("🚀 최대 미래가치", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
+                if cagr_max: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_max:+.1f}%</div>", unsafe_allow_html=True)
 
-                fig = go.Figure([go.Bar(x=chart_df['Year'], y=chart_df['EPS'], marker_color='#2962FF')])
-                fig.update_layout(title="연도별 EPS 성장 흐름", template="plotly_dark", height=300)
-                st.plotly_chart(fig, use_container_width=True)
+            st.write("---")
+            col1, col2 = st.columns(2)
+            with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
+            with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, t_min, t_max, t_buy)
+            
+            st.subheader("📌 핵심 요약 (메모)")
+            st.info(s_info.get('메모', '메모 없음'))
+            
+            st.subheader("💡 심층 리포트")
+            note = s_info.get('노트링크', '')
+            if note and "docs.google.com" in str(note):
+                components.iframe(note.replace("/edit", "/preview"), height=800, scrolling=True)
+            elif s_info.get('이미지URL'):
+                st.image(s_info.get('이미지URL'), use_container_width=True)
+                if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
+
+        # ----------------------------------------------------
+        # [탭 2] 가치분석 (10년치 당기순이익)
+        # ----------------------------------------------------
+        with tab2:
+            st.subheader(f"📊 {selected} 최근 10년 당기순이익 추이")
+            
+            if not is_korea:
+                st.info("미국 주식은 지원하지 않습니다.")
             else:
-                st.warning(f"EPS 데이터를 가져오지 못했습니다. ({msg})")
+                DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
+                
+                with st.spinner(f"{selected} 10년치 당기순이익 가져오는 중..."):
+                    inc_df, msg = fetch_net_income_history(DART_API_KEY, dart_code)
+                
+                if inc_df is not None:
+                    # 1. 표 보여주기 (가로 스크롤 가능)
+                    st.markdown("**단위: 억원**")
+                    st.dataframe(inc_df.style.format("{:,.0f}"), use_container_width=True)
+                    
+                    # 2. 바 차트 (시각화)
+                    chart_df = inc_df.T.reset_index() # 연도를 행으로
+                    chart_df.columns = ['Year', 'NetIncome']
+                    chart_df['NetIncome'] = chart_df['NetIncome'].astype(float)
+                    chart_df = chart_df.sort_values('Year')
 
-        st.write("---")
-        
-        # 차트 및 리포트 섹션
-        col1, col2 = st.columns(2)
-        with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
-        with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, t_min, t_max, t_buy)
-        
-        st.subheader("📌 핵심 요약 (메모)")
-        st.info(s_info.get('메모', '메모 없음'))
-        
-        st.subheader("💡 심층 리포트")
-        note = s_info.get('노트링크', '')
-        if note and "docs.google.com" in str(note):
-            components.iframe(note.replace("/edit", "/preview"), height=800, scrolling=True)
-        elif s_info.get('이미지URL'):
-            st.image(s_info.get('이미지URL'), use_container_width=True)
-            if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
+                    # 색상: 이익이면 파랑, 손실이면 빨강
+                    colors = ['#2962FF' if v >= 0 else '#FF5252' for v in chart_df['NetIncome']]
+
+                    fig = go.Figure([go.Bar(
+                        x=chart_df['Year'], 
+                        y=chart_df['NetIncome'], 
+                        marker_color=colors,
+                        text=chart_df['NetIncome'],
+                        textposition='auto'
+                    )])
+                    fig.update_layout(title="연도별 당기순이익 변화", template="plotly_dark", height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
 
     else:
         st.warning("종목 없음")
