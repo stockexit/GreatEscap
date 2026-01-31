@@ -57,27 +57,21 @@ def fetch_shares_history(ticker_code):
         start_date = f"{now_year - 12}0101"
         end_date = datetime.datetime.now().strftime("%Y%m%d")
         
-        # 2. 시가총액 데이터 (액면분할과 무관한 기업 가치)
+        # 2. 시가총액 & 수정주가 가져오기
         df_cap = stock.get_market_cap_by_date(start_date, end_date, ticker_code)
-        
-        # 3. 수정 주가 데이터 (액면분할이 반영된 현재 기준 가격)
-        # adjusted=True 옵션이 핵심입니다.
         df_price = stock.get_market_ohlcv_by_date(start_date, end_date, ticker_code, adjusted=True)
         
-        # 4. 데이터 병합 (날짜 기준)
+        # 3. 데이터 병합
         df_merged = pd.concat([df_cap['시가총액'], df_price['종가']], axis=1)
         df_merged.columns = ['시가총액', '수정주가']
         
-        # 5. [보정 로직] 수정 상장주식수 역산
-        # 공식: 시가총액 / 수정주가 = (보정된) 상장주식수
+        # 4. 상장주식수 역산 (시가총액 / 수정주가)
         df_merged['상장주식수'] = df_merged.apply(
             lambda x: x['시가총액'] / x['수정주가'] if x['수정주가'] > 0 else 0, axis=1
         )
 
-        # 6. 연도별 마지막 거래일(폐장일) 데이터만 추출
+        # 5. 연말 데이터 추출
         df_yearly = df_merged.groupby(df_merged.index.year).tail(1)
-        
-        # 7. 정리
         df_yearly['연도'] = df_yearly.index.year.astype(str)
         result = df_yearly[['연도', '상장주식수']].reset_index(drop=True)
         
@@ -117,34 +111,21 @@ def fetch_core_financials(api_key, ticker_code):
             if df is not None and not df.empty and 'account_nm' in df.columns:
                 df['account_clean'] = df['account_nm'].astype(str).str.replace(' ', '').str.strip()
 
-                # A. 매출액
-                mask_sales = df['account_clean'].str.contains('매출액|영업수익') & \
-                             ~df['account_clean'].str.contains('원가|총이익|미실현')
-                
-                # B. 영업이익
-                mask_op = df['account_clean'].str.contains('영업이익') & \
-                          ~df['account_clean'].str.contains('기타|금융|관계|지분')
-                
-                # C. 당기순이익
-                mask_net = df['account_clean'].str.contains('당기순이익') & \
-                           ~df['account_clean'].str.contains('포괄') & \
-                           ~df['account_clean'].str.contains('비지배')
+                mask_sales = df['account_clean'].str.contains('매출액|영업수익') & ~df['account_clean'].str.contains('원가|총이익|미실현')
+                mask_op = df['account_clean'].str.contains('영업이익') & ~df['account_clean'].str.contains('기타|금융|관계|지분')
+                mask_net = df['account_clean'].str.contains('당기순이익') & ~df['account_clean'].str.contains('포괄') & ~df['account_clean'].str.contains('비지배')
 
                 def extract_value(dataframe, mask):
                     if dataframe.empty: return 0
                     rows = dataframe[mask]
                     if rows.empty: return 0
-                    
-                    if len(rows) > 1:
-                        if '당기순이익' in str(mask):
-                            p_row = rows[rows['account_clean'].str.contains('지배')]
-                            if not p_row.empty: rows = p_row
-
+                    if len(rows) > 1 and '당기순이익' in str(mask):
+                        p_row = rows[rows['account_clean'].str.contains('지배')]
+                        if not p_row.empty: rows = p_row
                     val_str = str(rows.iloc[0]['thstrm_amount']).replace(',', '').strip()
                     try: return float(val_str)
                     except: return 0
 
-                # 연결 -> 별도 순서로 탐색
                 df_cfs = df[df['fs_div'] == 'CFS']
                 df_ofs = df[df['fs_div'] == 'OFS']
 
@@ -163,19 +144,14 @@ def fetch_core_financials(api_key, ticker_code):
                         '영업이익': op_income,
                         '순이익': net_income
                     })
-            
             time.sleep(0.05)
 
         status_text.empty()
 
         if result_data:
-            # 1. DART 데이터
             df_dart = pd.DataFrame(result_data)
-            
-            # 2. KRX 데이터 (수정 상장주식수)
             df_shares = fetch_shares_history(ticker_code)
             
-            # 3. 병합
             if not df_shares.empty:
                 df_final = pd.merge(df_dart, df_shares, on='연도', how='left')
             else:
@@ -184,26 +160,22 @@ def fetch_core_financials(api_key, ticker_code):
             
             df_final = df_final.sort_values('연도', ascending=False)
             
-            # 4. [보정 EPS 계산]
             def calc_eps(row):
                 try:
                     income = row['순이익']
                     shares = row['상장주식수']
-                    if shares > 0:
-                        return income / shares
+                    if shares > 0: return income / shares
                     return 0
                 except: return 0
 
             df_final['EPS(보정)'] = df_final.apply(calc_eps, axis=1)
 
-            # 5. 단위 정리
             df_final['매출액(억)'] = (df_final['매출액'] / 100000000).round(0)
             df_final['영업이익(억)'] = (df_final['영업이익'] / 100000000).round(0)
             df_final['순이익(억)'] = (df_final['순이익'] / 100000000).round(0)
             df_final['상장주식수(만주)'] = (df_final['상장주식수'] / 10000).round(0)
             df_final['EPS(원)'] = df_final['EPS(보정)'].round(0)
 
-            # 화면 출력용
             view_cols = ['연도', '매출액(억)', '영업이익(억)', '순이익(억)', '상장주식수(만주)', 'EPS(원)']
             df_view = df_final[view_cols].set_index('연도').T
             
@@ -354,22 +326,28 @@ if df_sheet is not None:
                 
                 if display_df is not None:
                     # -----------------------------------------------------
-                    # [신규 추가] 10년 평균 EPS 계산 및 표시
+                    # [업그레이드] 10년 평균 & 5년 평균 EPS 계산
                     # -----------------------------------------------------
-                    eps_mean = raw_data['EPS(원)'].mean()
+                    # 데이터는 연도 내림차순(최신순) 정렬되어 있음
+                    raw_data = raw_data.sort_values('연도') # 과거 -> 최신 순으로 정렬 변경 (그래프용)
+                    
+                    eps_series = raw_data['EPS(원)']
+                    
+                    eps_mean_10 = eps_series.mean() # 전체 평균 (최대 10년)
+                    eps_mean_5 = eps_series.tail(5).mean() # 최근 5개 평균
                     
                     # 지표 표시
-                    col_m1, col_m2, col_m3 = st.columns(3)
-                    with col_m1:
-                        st.metric("10년 평균 EPS", f"{eps_mean:,.0f}원")
-                    with col_m2:
-                        latest_eps = raw_data['EPS(원)'].iloc[0] # 최신 연도
-                        diff = latest_eps - eps_mean
-                        st.metric("최신 EPS vs 평균", f"{latest_eps:,.0f}원", f"{diff:,.0f}원 (차이)")
+                    c_m1, c_m2, c_m3 = st.columns(3)
+                    with c_m1:
+                        st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
+                    with c_m2:
+                        st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
+                    with c_m3:
+                        latest_eps = eps_series.iloc[-1]
+                        diff = latest_eps - eps_mean_5
+                        st.metric("최신 vs 5년평균", f"{latest_eps:,.0f}원", f"{diff:,.0f}원 (차이)")
                     
                     st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
-                    
-                    raw_data = raw_data.sort_values('연도')
                     
                     fig = make_subplots(specs=[[{"secondary_y": True}]])
                     
@@ -394,17 +372,31 @@ if df_sheet is not None:
                     ), secondary_y=True)
                     
                     # -----------------------------------------------------
-                    # [신규 추가] 평균 EPS 라인 (주황색 점선)
+                    # [추가] 10년 평균선 (주황색 점선)
                     # -----------------------------------------------------
                     fig.add_hline(
-                        y=eps_mean, 
+                        y=eps_mean_10, 
                         line_dash="dash", 
                         line_color="#FFAB00", 
                         line_width=2,
                         secondary_y=True,
-                        annotation_text=f"평균: {eps_mean:,.0f}원", 
+                        annotation_text=f"10년평균: {eps_mean_10:,.0f}", 
                         annotation_position="top left",
                         annotation_font_color="#FFAB00"
+                    )
+
+                    # -----------------------------------------------------
+                    # [추가] 5년 평균선 (보라색 점선)
+                    # -----------------------------------------------------
+                    fig.add_hline(
+                        y=eps_mean_5, 
+                        line_dash="dot", 
+                        line_color="#D500F9", 
+                        line_width=2,
+                        secondary_y=True,
+                        annotation_text=f"5년평균: {eps_mean_5:,.0f}", 
+                        annotation_position="bottom left",
+                        annotation_font_color="#D500F9"
                     )
                     
                     fig.update_layout(
