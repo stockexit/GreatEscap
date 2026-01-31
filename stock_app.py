@@ -4,17 +4,17 @@ import pandas as pd
 import plotly.graph_objects as go
 import ssl
 
-# 1. 화면 설정 (메뉴 상시 오픈)
+# 1. 화면 설정 (메뉴 상시 오픈 및 넓은 화면)
 st.set_page_config(
     page_title="사장님 투자 터미널", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
 
-# 2. SSL 에러 방지
+# 2. SSL 에러 방지 (로컬 실행 필수 설정)
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# 3. 데이터 로딩 (캐시 60초 설정)
+# 3. 데이터 로딩 (60초마다 자동 갱신)
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -25,7 +25,7 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수
+# 4. 차트 그리기 함수 (3개월 일봉 / 5년 주봉 로그차트)
 def draw_chart(ticker, period, title):
     try:
         interval = "1wk" if period == "5y" else "1d"
@@ -46,18 +46,18 @@ def draw_chart(ticker, period, title):
         )
         return st.plotly_chart(fig, use_container_width=True)
     except:
-        return st.write("데이터 로딩 중...")
+        return st.write("차트를 생성하는 중...")
 
-# 5. 메인 실행 로직
+# 5. 메인 로직
 df_sheet = load_data()
 
 if df_sheet is not None:
-    # 사이드바 설정
-    st.sidebar.markdown("## 🎯 종목 리스트")
-    selected = st.sidebar.selectbox("종목 선택 👇", df_sheet['종목명'].unique())
+    # 사이드바: 종목 선택
+    st.sidebar.markdown("## 🎯 분석 종목 리스트")
+    selected = st.sidebar.selectbox("종목을 골라주세요 👇", df_sheet['종목명'].unique())
     s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
     
-    # 실시간 주가 및 수익률
+    # 실시간 주가 및 수익률 계산
     try:
         ticker_obj = yf.Ticker(s_info['코드'])
         current_p = ticker_obj.history(period="1d")['Close'].iloc[-1]
@@ -68,21 +68,5 @@ if df_sheet is not None:
 
     st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
     
-    # 상단 요약 지표
-    c1, c2, c3 = st.columns(3)
-    c1.metric("실시간 현재가", f"${current_p:.2f}")
-    c2.metric("사장님 목표가", f"${target_p:.2f}")
-    c3.metric("목표 수익률", f"{gap_percent:.1f}%", delta=f"{gap_percent:.1f}%")
-
-    st.write("---")
-
-    # 차트 배치
-    col1, col2 = st.columns(2)
-    with col1:
-        draw_chart(s_info['코드'], "3mo", "📅 최근 3개월")
-    with col2:
-        draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장")
-
-    st.write("---")
-    # [수정 완료] '메메'를 '메모'로 고쳤습니다!
-    st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
+    # 상단 요약 지표 (실시간 데이터 연동)
+    c1, c2, c3 =
