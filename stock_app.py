@@ -341,58 +341,28 @@ if df_sheet is not None:
                 
                 if display_df is not None:
                     # -----------------------------------------------------
-                    # [핵심 업그레이드] 10년 성장률(CAGR) & 5년 성장률 계산
+                    # [복구] 평균값 기반 모멘텀 계산 (요청 사항 반영)
                     # -----------------------------------------------------
                     raw_data = raw_data.sort_values('연도') # 과거 -> 최신
+                    eps_series = raw_data['EPS(원)']
                     
-                    # 1. 10년 (또는 상장 이래) 데이터 확보
-                    df_max = raw_data # 전체 데이터 (Max 12년으로 제한되어 있음)
-                    period_max = len(df_max)
-                    label_max = f"{period_max}년 연평균 성장 (CAGR)" if period_max < 10 else "10년 연평균 성장 (CAGR)"
+                    # 1. 평균 계산
+                    eps_mean_10 = eps_series.mean()        # 전체(최대 10년) 평균
+                    eps_mean_5 = eps_series.tail(5).mean() # 최근 5년 평균
                     
-                    # 2. 5년 데이터 확보
-                    df_5 = raw_data.tail(5) if len(raw_data) >= 5 else raw_data
-                    
-                    # 3. CAGR 계산 함수 (적자 시 안전장치 포함)
-                    def calculate_cagr(df):
-                        if len(df) < 2: return 0, "데이터 부족"
-                        
-                        start_eps = df['EPS(원)'].iloc[0]
-                        end_eps = df['EPS(원)'].iloc[-1]
-                        years = len(df) - 1
-                        
-                        # Case A: 시작점이 적자(음수)인 경우 CAGR 공식 불가 -> 단순 성장폭으로 대체
-                        if start_eps <= 0:
-                            if end_eps > 0: return 999, "흑자전환 턴어라운드 🎉"
-                            else: return -999, "적자 지속 ⚠️"
-                        
-                        # Case B: 정상 계산 (CAGR 공식)
-                        # (기말 / 기초)^(1/n) - 1
-                        try:
-                            cagr = (end_eps / start_eps) ** (1 / years) - 1
-                            return cagr * 100, f"{cagr*100:+.1f}%"
-                        except:
-                            return 0, "계산 오류"
+                    # 2. 모멘텀 계산 (단순 등락률: (5년평균 - 10년평균)/10년평균)
+                    if eps_mean_10 > 0:
+                        momentum = ((eps_mean_5 - eps_mean_10) / eps_mean_10) * 100
+                    else:
+                        momentum = 0 # 적자거나 분모가 0이면 0 처리
 
-                    # 4. 계산 실행
-                    cagr_max_val, cagr_max_str = calculate_cagr(df_max)
-                    cagr_5_val, cagr_5_str = calculate_cagr(df_5)
-                    
-                    # 5. 화면 표시 (컬럼 3개)
+                    # 화면 표시
                     c_m1, c_m2, c_m3 = st.columns(3)
-                    
-                    with c_m1: 
-                        st.metric(label_max, cagr_max_str, help="기간 내 연평균 EPS 성장률입니다.")
-                    with c_m2: 
-                        st.metric("최근 5년 연평균 성장", cagr_5_str, help="최근 5년간의 성장 추세입니다.")
+                    with c_m1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
+                    with c_m2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
                     with c_m3:
-                        # 모멘텀: 단기 성장이 장기 성장보다 빠른가?
-                        if cagr_max_val != 999 and cagr_5_val != 999: # 턴어라운드 케이스 아닐 때만 비교
-                            diff = cagr_5_val - cagr_max_val
-                            st.metric("성장 가속도 (단기-장기)", f"{diff:+.1f}%p", delta_color="normal")
-                        else:
-                             st.metric("성장 가속도", "평가 불가 (적자이슈)")
-
+                        st.metric("성장 모멘텀 (Momentum)", f"{momentum:+.1f}%", f"{momentum:+.1f}% (장기평균 대비)", delta_color="normal")
+                    
                     st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
                     
                     # 차트 그리기
@@ -417,6 +387,12 @@ if df_sheet is not None:
                         textposition="top center",
                         textfont=dict(color="white", size=11)
                     ), secondary_y=True)
+                    
+                    # 평균선 표시
+                    fig.add_hline(y=eps_mean_10, line_dash="dash", line_color="#FFAB00", line_width=2, secondary_y=True,
+                                  annotation_text=f"10년평균: {eps_mean_10:,.0f}", annotation_position="top left", annotation_font_color="#FFAB00")
+                    fig.add_hline(y=eps_mean_5, line_dash="dot", line_color="#D500F9", line_width=2, secondary_y=True,
+                                  annotation_text=f"5년평균: {eps_mean_5:,.0f}", annotation_position="bottom left", annotation_font_color="#D500F9")
                     
                     fig.update_layout(title=f"{selected} 실적 성장 추이", template="plotly_dark", barmode='group', height=550, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                     fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
