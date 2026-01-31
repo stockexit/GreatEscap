@@ -30,8 +30,8 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수
-def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
+# 4. 차트 그리기 함수 (매수가치 인자 추가됨)
+def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, target_buy=None):
     try:
         interval = "1d" if period == "3mo" else "1wk"
         df = yf.download(ticker, period=period, interval=interval)
@@ -47,6 +47,18 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
             low=df['Low'], close=df['Close'], name=title
         )])
         
+        # [NEW] 매수 가치 (노란색 실선 - 눈에 띄게)
+        if target_buy and target_buy > 0:
+            fig.add_hline(y=target_buy, line_width=2, line_color="#FFD600", opacity=1.0)
+            fig.add_annotation(
+                x=df.index[-1], y=target_buy, 
+                text=f"<b>⚡ 매수 {unit}{target_buy:,.0f}</b>", 
+                showarrow=False, yshift=0, xshift=50, # 텍스트 위치 조정
+                font=dict(color="black", size=12),    # 노란 배경엔 검은 글씨가 잘 보임
+                bgcolor="#FFD600", bordercolor="white", borderwidth=1, opacity=0.9
+            )
+
+        # 보수적 적정가 (초록 점선)
         if target_min and target_min > 0:
             fig.add_hline(y=target_min, line_dash="dot", line_color="#00C853", opacity=0.8)
             fig.add_annotation(
@@ -55,6 +67,7 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
                 bgcolor="#00C853", bordercolor="white", borderwidth=1, opacity=0.9
             )
 
+        # 최대 미래가치 (빨강 파선)
         if target_max and target_max > 0:
             fig.add_hline(y=target_max, line_dash="dash", line_color="#FF3D00", opacity=0.8)
             fig.add_annotation(
@@ -101,19 +114,19 @@ if df_sheet is not None:
         grade = s_info.get('투자등급', '미분류') 
         
         if grade == "코어":
-            badge_color = "#2962FF"  # 파랑
+            badge_color = "#2962FF"
             badge_icon = "💎"
             badge_text = "CORE"
         elif grade == "위성":
-            badge_color = "#FFAB00"  # 노랑
+            badge_color = "#FFAB00"
             badge_icon = "🛰️"
             badge_text = "SATELLITE"
         elif grade == "시가존":
-            badge_color = "#2E7D32"  # 초록 (진한 녹색)
-            badge_icon = "🚬"        # 담배 아이콘
+            badge_color = "#2E7D32"  # 초록색 배경
+            badge_icon = "🚬"
             badge_text = "시가존"
         else:
-            badge_color = "#616161"  # 회색
+            badge_color = "#616161"
             badge_icon = "❔"
             badge_text = "미지정"
 
@@ -122,28 +135,30 @@ if df_sheet is not None:
             history = ticker_obj.history(period="1d")
             current_p = history['Close'].iloc[-1] if not history.empty else 0
 
+            # 가격 정보 가져오기 (컬럼 없으면 0 처리)
             t_min = float(s_info.get('보수적적정가', 0))
-            t_max = float(s_info.get('최대미래가치', 0)) 
+            t_max = float(s_info.get('최대미래가치', 0))
+            t_buy = float(s_info.get('매수가치', 0)) # [NEW] 매수 가치
             
             if current_p > 0:
                 gap_min = ((t_min - current_p) / current_p) * 100
                 gap_max = ((t_max - current_p) / current_p) * 100
+                gap_buy = ((t_buy - current_p) / current_p) * 100
             else:
-                gap_min, gap_max = 0, 0
+                gap_min, gap_max, gap_buy = 0, 0, 0
 
         except Exception as e:
-            current_p, t_min, t_max = 0, 0, 0
-            gap_min, gap_max = 0, 0
+            current_p, t_min, t_max, t_buy = 0, 0, 0, 0
+            gap_min, gap_max, gap_buy = 0, 0, 0
             st.error(f"데이터 오류: {e}")
 
-        # [수정됨] 타이틀 텍스트 변경: Analysis -> 기업 가치
         st.title(f"🚀 {selected} ({ticker_code}) 기업 가치")
         
-        c1, c2, c3 = st.columns(3)
+        # [NEW] 컬럼을 4개로 늘려서 '매수 가치' 표시
+        c1, c2, c3, c4 = st.columns(4)
         
         with c1:
             st.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
-            # 배지 표시
             st.markdown(f"""
                 <div style="
                     background-color: {badge_color};
@@ -160,19 +175,24 @@ if df_sheet is not None:
                 </div>
             """, unsafe_allow_html=True)
 
+        # [NEW] 매수 가치 섹션 (노란색 강조)
         with c2:
+            st.metric("⚡ 매수 가치 (진입)", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
+
+        with c3:
             st.metric("🛡️ 보수적 적정가 (안전)", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
         
-        with c3:
+        with c4:
             st.metric("🚀 최대 미래가치 (목표)", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
 
         st.write("---")
 
+        # 차트 그리기 (t_buy 추가 전달)
         col1, col2 = st.columns(2)
         with col1:
-            draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
+            draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit, target_buy=t_buy)
         with col2:
-            draw_chart(ticker_code, "5y", "🏛️ 5년 장기 + 가치 평가", unit, t_min, t_max)
+            draw_chart(ticker_code, "5y", "🏛️ 5년 장기 + 가치 평가", unit, t_min, t_max, t_buy)
 
         st.write("---")
         
