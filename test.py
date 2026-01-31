@@ -33,23 +33,23 @@ st.markdown("""
         [data-testid="stHorizontalBlock"] {
             display: flex !important;
             flex-direction: row !important;
-            flex-wrap: nowrap !important;
+            flex-wrap: wrap !important;
             width: 100% !important;
             gap: 2px !important;
         }
         [data-testid="column"] {
-            /* 50%에서 아주 미세한 여백을 뺀 값으로 옆으로 밀림 방지 */
-            width: calc(50% - 4px) !important;
-            flex: 1 1 calc(50% - 4px) !important;
-            min-width: calc(50% - 4px) !important;
+            /* 50%에서 여백을 뺀 값으로 옆으로 밀림 방지 */
+            width: calc(50% - 6px) !important;
+            flex: 1 1 calc(50% - 6px) !important;
+            min-width: calc(50% - 6px) !important;
         }
         /* 차트 높이 최적화 */
-        .stPlotlyChart { height: 240px !important; }
+        .stPlotlyChart { height: 230px !important; }
     }
     </style>
     """, unsafe_allow_html=True)
 
-# 3. 구글 시트 연결 (사장님 시트 주소)
+# 3. 구글 시트 연결 (사장님의 시트 주소)
 sheet_url = "https://docs.google.com/spreadsheets/d/1FHEblKL20VNpqdhnGu2FK7UY4ueMS3JSEwiZUEqDtaw/edit?usp=sharing"
 url = sheet_url.split("/edit")[0] + "/export?format=csv"
 
@@ -66,13 +66,12 @@ df_sheet = load_data(url)
 # 4. 종목 선택 로직
 if df_sheet is not None and not df_sheet.empty:
     st.sidebar.markdown("### 🎯 분석 종목")
-    # 종목명이 있는 데이터만 추출
     valid_df = df_sheet.dropna(subset=['종목명'])
     stock_list = valid_df['종목명'].unique().tolist()
     selected_name = st.sidebar.selectbox("종목 선택", stock_list)
     stock_info = valid_df[valid_df['종목명'] == selected_name].iloc[0]
 else:
-    st.warning("구글 시트에서 데이터를 불러오는 중입니다...")
+    st.warning("구글 시트 데이터를 불러오는 중입니다... 시트를 확인해주세요.")
     st.stop()
 
 # 5. 차트 생성 함수 (오타 완벽 박멸)
@@ -84,4 +83,18 @@ def draw_chart(ticker, period, title):
             df.columns = df.columns.get_level_values(0)
         
         if df.empty:
-            return st.write(f"{title}:
+            return st.write(f"{title}: 데이터 로드 실패")
+
+        fig = go.Figure(data=[go.Candlestick(
+            x=df.index, open=df['Open'], high=df['High'], 
+            low=df['Low'], close=df['Close'], name=title
+        )])
+
+        fig.update_layout(
+            title=dict(text=title, font=dict(size=11)),
+            height=300, 
+            template="plotly_dark",
+            xaxis_rangeslider_visible=False,
+            margin=dict(l=2, r=2, b=2, t=35),
+            yaxis_type="log" if period == "max" else "linear",
+            xaxis=dict(fixedrange=
