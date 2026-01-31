@@ -101,19 +101,19 @@ if df_sheet is not None:
         grade = s_info.get('투자등급', '미분류') 
         
         if grade == "코어":
-            badge_color = "#2962FF"
+            badge_color = "#2962FF"  # 파랑
             badge_icon = "💎"
             badge_text = "CORE"
         elif grade == "위성":
-            badge_color = "#FFAB00"
+            badge_color = "#FFAB00"  # 노랑
             badge_icon = "🛰️"
             badge_text = "SATELLITE"
         elif grade == "시가존":
-            badge_color = "#D50000"
-            badge_icon = "🚬"        # 담배 아이콘 적용
-            badge_text = "시가존"     # 깔끔하게 이름만 표시
+            badge_color = "#2E7D32"  # [수정] 초록색 (진한 녹색)
+            badge_icon = "🚬"        # 담배 아이콘
+            badge_text = "시가존"     # 텍스트 깔끔하게
         else:
-            badge_color = "#616161"
+            badge_color = "#616161"  # 회색
             badge_icon = "❔"
             badge_text = "미지정"
 
