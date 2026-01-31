@@ -4,27 +4,26 @@ import pandas as pd
 import plotly.graph_objects as go
 import ssl
 
-# 1. 화면 설정 (한국 시장 우선, 메뉴 상시 오픈)
+# 1. 화면 설정
 st.set_page_config(
-    page_title="위대한탈출 가치평가 연구소", 
+    page_title="사장님 투자 터미널", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
 
-# 2. SSL 에러 방지 (로컬 실행 시 필수)
+# 2. SSL 에러 방지
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# 3. 데이터 로딩 및 시장 자동 분류
+# 3. 데이터 로딩
 @st.cache_data(ttl=60)
 def load_data():
     try:
         sheet_url = "https://docs.google.com/spreadsheets/d/1FHEblKL20VNpqdhnGu2FK7UY4ueMS3JSEwiZUEqDtaw/edit?usp=sharing"
-        # 구글 시트 URL을 CSV 다운로드 링크로 변환
         url = sheet_url.split("/edit")[0] + "/export?format=csv"
         df = pd.read_csv(url)
         df = df.dropna(subset=['종목명'])
         
-        # 코드 끝자리를 보고 한국/미국 시장 자동 분류
+        # 한국/미국 자동 분류
         df['Market'] = df['코드'].apply(
             lambda x: "한국(KRW)" if str(x).upper().endswith(('.KS', '.KQ')) else "미국(USD)"
         )
@@ -32,10 +31,9 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수 (줌/팬 잠금 + 목표가 2줄 표시)
+# 4. 차트 그리기 함수
 def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
     try:
-        # 3개월은 일봉(1d), 5년은 주봉(1wk)으로 설정
         interval = "1d" if period == "3mo" else "1wk"
         df = yf.download(ticker, period=period, interval=interval)
         
@@ -50,69 +48,41 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # --- [1] 보수적 적정가 (초록색 방어선) ---
+        # 보수적 적정가
         if target_min and target_min > 0:
             fig.add_hline(y=target_min, line_dash="dot", line_color="#00C853", opacity=0.8)
             fig.add_annotation(
-                x=df.index[-1], y=target_min,
-                text=f"<b>🛡️ 보수 {unit}{target_min:,.0f}</b>", 
-                showarrow=False, 
-                yshift=-20, # 텍스트를 선 아래로 배치
-                font=dict(color="white", size=13),
-                bgcolor="#00C853", 
-                bordercolor="white", borderwidth=1, opacity=0.9
+                x=df.index[-1], y=target_min, text=f"<b>🛡️ 보수 {unit}{target_min:,.0f}</b>", 
+                showarrow=False, yshift=-20, font=dict(color="white", size=13),
+                bgcolor="#00C853", bordercolor="white", borderwidth=1, opacity=0.9
             )
 
-        # --- [2] 최대 미래가치 (빨간색 목표선) ---
+        # 최대 미래가치
         if target_max and target_max > 0:
             fig.add_hline(y=target_max, line_dash="dash", line_color="#FF3D00", opacity=0.8)
             fig.add_annotation(
-                x=df.index[-1], y=target_max,
-                text=f"<b>🚀 최대 {unit}{target_max:,.0f}</b>", 
-                showarrow=False, 
-                yshift=20, # 텍스트를 선 위로 배치
-                font=dict(color="white", size=13),
-                bgcolor="#FF3D00", 
-                bordercolor="white", borderwidth=1, opacity=0.9
+                x=df.index[-1], y=target_max, text=f"<b>🚀 최대 {unit}{target_max:,.0f}</b>", 
+                showarrow=False, yshift=20, font=dict(color="white", size=13),
+                bgcolor="#FF3D00", bordercolor="white", borderwidth=1, opacity=0.9
             )
         
-        # ▼ 레이아웃 설정 (움직임 잠금 핵심 부분)
         fig.update_layout(
             title=dict(text=f"{title} ({unit})", font=dict(size=18)),
-            height=450, 
-            template="plotly_dark",
-            margin=dict(l=10, r=10, b=10, t=50),
-            
-            # 1. 하단 슬라이더 제거
+            height=450, template="plotly_dark", margin=dict(l=10, r=10, b=10, t=50),
             xaxis_rangeslider_visible=False,
-            
-            # 2. X축(시간) 이동 및 줌 금지
-            xaxis=dict(
-                fixedrange=True 
-            ),
-            
-            # 3. Y축(가격) 이동 및 줌 금지
-            yaxis=dict(
-                fixedrange=True 
-            )
+            xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True)
         )
         
-        # 4. 차트 설정 (상단 메뉴바 숨김 + 스크롤 줌 금지)
-        config = {
-            'displayModeBar': False, # 상단 도구모음(줌 버튼 등) 숨김
-            'scrollZoom': False      # 마우스 휠로 확대/축소 금지
-        }
-        
+        config = {'displayModeBar': False, 'scrollZoom': False}
         return st.plotly_chart(fig, use_container_width=True, config=config)
 
     except Exception as e:
         return st.write(f"차트 로딩 중 에러: {e}")
 
-# 5. 메인 로직 실행
+# 5. 메인 로직
 df_sheet = load_data()
 
 if df_sheet is not None:
-    # 사이드바: 시장 및 종목 선택
     st.sidebar.markdown("## 🌍 시장 선택")
     market_choice = st.sidebar.radio("보고 싶은 시장", ["한국(KRW)", "미국(USD)"])
     
@@ -125,27 +95,45 @@ if df_sheet is not None:
         selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
         s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
         
-        # 기본 정보 설정
         ticker_code = s_info['코드'].upper()
         is_korea = market_choice == "한국(KRW)"
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
-        # 현재가 및 목표가 데이터 처리
+        # --- [변경] 투자 등급(신호등) 데이터 가져오기 ---
+        # 구글 시트에 '투자등급' 컬럼이 없으면 '미분류'로 처리
+        grade = s_info.get('투자등급', '미분류') 
+        
+        # 등급별 색상 및 아이콘 설정
+        if grade == "코어":
+            badge_color = "#2962FF"  # 진한 파랑 (신뢰/무게감)
+            badge_icon = "💎"
+            badge_text = "CORE (주력)"
+        elif grade == "위성":
+            badge_color = "#FFAB00"  # 앰버/노랑 (민첩함)
+            badge_icon = "🛰️"
+            badge_text = "SATELLITE (위성)"
+        elif grade == "시가존":
+            badge_color = "#D50000"  # 빨강 (적극적 트레이딩)
+            badge_icon = "🔥"
+            badge_text = "MARKET ZONE (단기)"
+        else:
+            badge_color = "#616161"  # 회색
+            badge_icon = "❔"
+            badge_text = "등급 미지정"
+
+        # 현재가 로딩
         try:
             ticker_obj = yf.Ticker(ticker_code)
             history = ticker_obj.history(period="1d")
-            
             if not history.empty:
                 current_p = history['Close'].iloc[-1]
             else:
                 current_p = 0
 
-            # 구글 시트 컬럼 읽기
             t_min = float(s_info.get('보수적적정가', 0))
             t_max = float(s_info.get('최대미래가치', 0)) 
             
-            # 수익률 계산
             if current_p > 0:
                 gap_min = ((t_min - current_p) / current_p) * 100
                 gap_max = ((t_max - current_p) / current_p) * 100
@@ -155,20 +143,42 @@ if df_sheet is not None:
         except Exception as e:
             current_p, t_min, t_max = 0, 0, 0
             gap_min, gap_max = 0, 0
-            st.error(f"데이터 불러오기 오류: {e}")
+            st.error(f"데이터 오류: {e}")
 
-        # --- 메인 화면 구성 ---
-        st.title(f"🚀 {selected} ({ticker_code}) 기업 가치")
+        # 메인 타이틀
+        st.title(f"🚀 {selected} ({ticker_code}) Analysis")
         
-        # 3단 지표
+        # --- [변경] 3단 지표 + 신호등 표시 ---
         c1, c2, c3 = st.columns(3)
-        c1.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
-        c2.metric("🛡️ 보수적 적정가 (안전)", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
-        c3.metric("🚀 최대 미래가치 (목표)", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
+        
+        with c1:
+            st.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
+            # HTML/CSS를 사용하여 신호등(배지) 만들기
+            st.markdown(f"""
+                <div style="
+                    background-color: {badge_color};
+                    padding: 5px 10px;
+                    border-radius: 5px;
+                    color: white;
+                    font-weight: bold;
+                    text-align: center;
+                    display: inline-block;
+                    margin-top: -15px;
+                    font-size: 0.9em;
+                ">
+                    {badge_icon} {badge_text}
+                </div>
+            """, unsafe_allow_html=True)
+
+        with c2:
+            st.metric("🛡️ 보수적 적정가 (안전)", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
+        
+        with c3:
+            st.metric("🚀 최대 미래가치 (목표)", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
 
         st.write("---")
 
-        # 차트 배치
+        # 차트 영역
         col1, col2 = st.columns(2)
         with col1:
             draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
@@ -177,7 +187,7 @@ if df_sheet is not None:
 
         st.write("---")
         
-        # 메모 섹션
+        # 메모 영역
         st.subheader("💡 투자 포인트 및 메모")
         memo_content = s_info.get('메모', '작성된 메모가 없습니다.')
         if pd.isna(memo_content):
@@ -185,6 +195,6 @@ if df_sheet is not None:
         st.info(memo_content)
         
     else:
-        st.warning("선택한 시장에 해당하는 종목이 구글 시트에 없습니다.")
+        st.warning("선택한 시장에 해당하는 종목이 없습니다.")
 else:
     st.error("데이터 로딩 실패! 구글 시트 연결을 확인하세요.")
