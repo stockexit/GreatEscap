@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components # [복구완료] 이게 빠져서 에러가 났습니다!
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
