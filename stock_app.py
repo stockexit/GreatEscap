@@ -7,6 +7,7 @@ import ssl
 import OpenDartReader
 import time
 import re 
+import datetime # [필수] 날짜 자동 계산을 위해 추가됨
 
 # 1. 화면 설정
 st.set_page_config(
@@ -31,7 +32,7 @@ def load_data():
     except:
         return None
 
-# 4. [최종 수정] DART 데이터 수집 함수 (모든 에러 방어)
+# 4. [자동 날짜 적용] DART 데이터 수집 함수
 def fetch_dart_data(api_key, ticker_code, stock_name):
     try:
         dart = OpenDartReader(api_key)
@@ -41,12 +42,19 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
     if len(str(ticker_code)) != 6:
         return None, f"DART는 6자리 숫자 코드만 조회 가능합니다. (현재: {ticker_code})"
 
-    start_year = 2015
-    end_year = 2023
+    # -----------------------------------------------------------
+    # [NEW] 올해 연도를 자동으로 구해서 10년 전까지 설정
+    # -----------------------------------------------------------
+    now_year = datetime.datetime.now().year # 현재 연도 (예: 2026)
+    end_year = now_year
+    start_year = now_year - 10
+    
     financial_list = []
     
     progress_text = "DART 서버 접속 중..."
     my_bar = st.progress(0, text=progress_text)
+    
+    # 범위: 시작년도 ~ 올해까지
     total_years = end_year - start_year + 1
 
     try:
@@ -54,22 +62,16 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
             percent = int((idx / total_years) * 100)
             my_bar.progress(percent, text=f"{year}년도 데이터 수집 중... ({percent}%)")
             
-            # 데이터 요청
             try:
+                # 11011: 사업보고서 (연간 확정 실적)
                 df = dart.finstate(ticker_code, year, reprt_code='11011')
             except:
                 df = None
 
             if df is not None:
-                # -------------------------------------------------------
-                # [에러 방지 1] 핵심 컬럼(account_nm)이 없으면 이 해는 건너뜀
-                # -------------------------------------------------------
-                if 'account_nm' not in df.columns:
-                    continue 
+                if 'account_nm' not in df.columns: continue 
 
-                # -------------------------------------------------------
-                # [에러 방지 2] fs_div(연결/별도 구분) 처리
-                # -------------------------------------------------------
+                # 연결/별도 구분
                 if 'fs_div' in df.columns:
                     if 'CFS' in df['fs_div'].values:
                         df = df[df['fs_div'] == 'CFS']
@@ -78,7 +80,6 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
                 
                 df['Year'] = year
                 
-                # 필터링 로직
                 cond_sales = df['account_nm'].str.contains('매출액|영업수익') & ~df['account_nm'].str.contains('원가')
                 cond_op = df['account_nm'].str.contains('영업이익')
                 cond_net = df['account_nm'].str.contains('당기순이익') & ~df['account_nm'].str.contains('포괄|지배|비지배')
@@ -95,7 +96,7 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
         if financial_list:
             df_final = pd.concat(financial_list)
             
-            # 숫자 변환 (에러 방지: 문자가 섞여 있어도 강제로 처리)
+            # 숫자 변환
             def clean_number(x):
                 try:
                     return float(str(x).replace(',', ''))
@@ -109,12 +110,16 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
             df_pivot = df_pivot / 100000000 # 억 단위
             df_pivot = df_pivot.round(0)
             
+            # 연도 기준으로 내림차순 정렬 (최신이 위로 오게 하려면 ascending=False)
+            # 여기서는 차트처럼 보기 편하게 오름차순(옛날->최신) 유지
+            df_pivot = df_pivot.sort_index(ascending=True)
+            
             file_name = f"{stock_name}({ticker_code})_재무제표.csv"
             df_pivot.to_csv(file_name, encoding="utf-8-sig")
             
             return df_pivot, f"성공! '{file_name}' 저장 완료"
         else:
-            return None, "수집된 데이터가 없거나, DART에 표준 재무제표가 없는 종목입니다."
+            return None, "수집된 데이터가 없거나, 아직 사업보고서가 나오지 않았습니다."
 
     except Exception as e:
         return None, f"에러 발생: {e}"
@@ -195,7 +200,7 @@ if df_sheet is not None:
             # ⚠️ 본인 API 키 입력 필수
             DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
             
-            if st.sidebar.button("10년치 재무제표 가져오기 (클릭)"):
+            if st.sidebar.button("최근 10년 재무제표 가져오기 (클릭)"):
                 with st.spinner('DART 접속 중...'):
                     dart_df, msg = fetch_dart_data(DART_API_KEY, dart_code, selected)
                     
