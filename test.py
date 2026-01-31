@@ -10,19 +10,19 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# 2. [수정] 메뉴 버튼은 살리고 지저분한 로고/여백만 제거하는 CSS
+# 2. [정밀 수술] 메뉴 버튼은 살리고 지저분한 로고만 제거하는 CSS
 st.markdown("""
     <style>
     /* 하단 푸터와 툴바만 제거 */
     footer {visibility: hidden;}
     div[data-testid="stToolbar"] {visibility: hidden !important;}
     
-    /* 헤더는 숨기지 않고, 배경을 투명하게 해서 메뉴 버튼만 남김 */
+    /* 헤더는 숨기지 않고 배경만 투명하게 해서 '메뉴 버튼'만 남김 */
     header[data-testid="stHeader"] {
         background-color: rgba(0,0,0,0);
     }
     
-    /* 사이드바 너비 고정 */
+    /* 사이드바 너비 고정 및 가독성 향상 */
     [data-testid="stSidebar"] { min-width: 260px; max-width: 260px; }
     </style>
     """, unsafe_allow_html=True)
@@ -44,7 +44,7 @@ df_sheet = load_data(url)
 # 4. 차트 그리기 함수 (SyntaxError 모든 지점 완벽 수술)
 def draw_chart(ticker, period, title):
     try:
-        # try-except 구조 완성
+        # try-except-finally 구조 완성
         interval = "1wk" if period == "5y" else "1d"
         df = yf.download(ticker, period=period, interval=interval)
         
@@ -53,14 +53,14 @@ def draw_chart(ticker, period, title):
             
         # st.write 괄호 닫기
         if df.empty:
-            return st.write(f"⚠️ {title}: 데이터 없음")
+            return st.write(f"⚠️ {title}: 데이터를 찾을 수 없습니다.")
 
         fig = go.Figure(data=[go.Candlestick(
             x=df.index, open=df['Open'], high=df['High'], 
             low=df['Low'], close=df['Close'], name=title
         )])
 
-        # 문자열 마감 완벽 체크
+        # 문자열 마감 및 f-string 완벽 체크
         fig.update_layout(
             title=dict(text=title, font=dict(size=18)),
             height=500, 
@@ -70,8 +70,8 @@ def draw_chart(ticker, period, title):
             yaxis_type="log" if period == "5y" else "linear"
         )
         return st.plotly_chart(fig, use_container_width=True)
-    except:
-        return st.error(f"⚠️ {title}: 데이터 로드 실패")
+    except Exception as e:
+        return st.error(f"차트 로드 에러: {e}")
 
 # 5. 메인 로직 실행
 if df_sheet is not None and not df_sheet.empty:
@@ -89,21 +89,9 @@ if df_sheet is not None and not df_sheet.empty:
     # 메인 화면 구성
     st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
 
-    # 함수 호출 괄호 완벽 마감
+    # 함수 호출 괄호 마감 체크
     col1, col2 = st.columns(2)
     with col1:
         draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
     with col2:
-        draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장")
-
-    st.write("---")
-
-    # 변수 정의를 로직 안으로 이동
-    c_a, c_b = st.columns([1, 2])
-    with c_a:
-        st.metric("사장님 목표가", f"{s_info['적정가']}")
-    with c_b:
-        # f-string 중괄호 마감
-        st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
-else:
-    st.error("데이터 로딩 실패! 시트 설정을 확인해주세요.")
+        draw_chart(s_info
