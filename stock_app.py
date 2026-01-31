@@ -47,33 +47,34 @@ def load_data():
         return None
 
 # =========================================================
-# 3. [핵심] 수정 주식수 계산 함수 (액면분할 보정)
+# 3. [핵심] 수정 주식수 & 시가총액 가져오기
 # =========================================================
 @st.cache_data(show_spinner=False)
 def fetch_shares_history(ticker_code):
     try:
-        # 1. 기간 설정 (넉넉하게 12년 전부터)
         now_year = datetime.datetime.now().year
         start_date = f"{now_year - 12}0101"
         end_date = datetime.datetime.now().strftime("%Y%m%d")
         
-        # 2. 시가총액 & 수정주가 가져오기
+        # 시가총액 & 수정주가
         df_cap = stock.get_market_cap_by_date(start_date, end_date, ticker_code)
         df_price = stock.get_market_ohlcv_by_date(start_date, end_date, ticker_code, adjusted=True)
         
-        # 3. 데이터 병합
+        # 병합
         df_merged = pd.concat([df_cap['시가총액'], df_price['종가']], axis=1)
         df_merged.columns = ['시가총액', '수정주가']
         
-        # 4. 상장주식수 역산 (시가총액 / 수정주가)
+        # 상장주식수 역산
         df_merged['상장주식수'] = df_merged.apply(
             lambda x: x['시가총액'] / x['수정주가'] if x['수정주가'] > 0 else 0, axis=1
         )
 
-        # 5. 연말 데이터 추출
+        # 연말 데이터 추출
         df_yearly = df_merged.groupby(df_merged.index.year).tail(1)
         df_yearly['연도'] = df_yearly.index.year.astype(str)
-        result = df_yearly[['연도', '상장주식수']].reset_index(drop=True)
+        
+        # [수정됨] '시가총액'도 같이 반환합니다 (EV/EBIT 계산용)
+        result = df_yearly[['연도', '상장주식수', '시가총액']].reset_index(drop=True)
         
         return result
     except Exception as e:
@@ -153,13 +154,16 @@ def fetch_core_financials(api_key, ticker_code):
             df_shares = fetch_shares_history(ticker_code)
             
             if not df_shares.empty:
+                # [수정됨] 시가총액도 같이 merge
                 df_final = pd.merge(df_dart, df_shares, on='연도', how='left')
             else:
                 df_final = df_dart
                 df_final['상장주식수'] = 0
+                df_final['시가총액'] = 0
             
             df_final = df_final.sort_values('연도', ascending=False)
             
+            # 1. EPS 계산
             def calc_eps(row):
                 try:
                     income = row['순이익']
@@ -167,16 +171,30 @@ def fetch_core_financials(api_key, ticker_code):
                     if shares > 0: return income / shares
                     return 0
                 except: return 0
+            
+            # 2. [신규] EV/EBIT (대용치: 시총/영업이익) 계산
+            def calc_ev_ebit(row):
+                try:
+                    cap = row['시가총액']
+                    op_income = row['영업이익']
+                    if op_income > 0: # 영업이익 흑자일 때만 계산
+                        return cap / op_income
+                    return 0 # 적자면 0 처리
+                except: return 0
 
             df_final['EPS(보정)'] = df_final.apply(calc_eps, axis=1)
+            df_final['EV/EBIT(배)'] = df_final.apply(calc_ev_ebit, axis=1) # 컬럼 추가
 
+            # 단위 정리
             df_final['매출액(억)'] = (df_final['매출액'] / 100000000).round(0)
             df_final['영업이익(억)'] = (df_final['영업이익'] / 100000000).round(0)
             df_final['순이익(억)'] = (df_final['순이익'] / 100000000).round(0)
-            df_final['상장주식수(만주)'] = (df_final['상장주식수'] / 10000).round(0)
+            df_final['시가총액(억)'] = (df_final['시가총액'] / 100000000).round(0) # 시총 추가
             df_final['EPS(원)'] = df_final['EPS(보정)'].round(0)
+            df_final['멀티플(배)'] = df_final['EV/EBIT(배)'].round(1)
 
-            view_cols = ['연도', '매출액(억)', '영업이익(억)', '순이익(억)', '상장주식수(만주)', 'EPS(원)']
+            # 표에 보여줄 컬럼
+            view_cols = ['연도', '매출액(억)', '영업이익(억)', '순이익(억)', '시가총액(억)', '멀티플(배)', 'EPS(원)']
             df_view = df_final[view_cols].set_index('연도').T
             
             return df_view, df_final.head(10), "OK"
@@ -325,30 +343,23 @@ if df_sheet is not None:
                     display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
                 
                 if display_df is not None:
-                    # -----------------------------------------------------
-                    # [업그레이드] 10년 평균 & 5년 평균 EPS 계산
-                    # -----------------------------------------------------
-                    # 데이터는 연도 내림차순(최신순) 정렬되어 있음
-                    raw_data = raw_data.sort_values('연도') # 과거 -> 최신 순으로 정렬 변경 (그래프용)
-                    
+                    # 10년, 5년 평균
+                    raw_data = raw_data.sort_values('연도')
                     eps_series = raw_data['EPS(원)']
+                    eps_mean_10 = eps_series.mean()
+                    eps_mean_5 = eps_series.tail(5).mean()
                     
-                    eps_mean_10 = eps_series.mean() # 전체 평균 (최대 10년)
-                    eps_mean_5 = eps_series.tail(5).mean() # 최근 5개 평균
-                    
-                    # 지표 표시
                     c_m1, c_m2, c_m3 = st.columns(3)
-                    with c_m1:
-                        st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
-                    with c_m2:
-                        st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
+                    with c_m1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
+                    with c_m2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
                     with c_m3:
                         latest_eps = eps_series.iloc[-1]
                         diff = latest_eps - eps_mean_5
-                        st.metric("최신 vs 5년평균", f"{latest_eps:,.0f}원", f"{diff:,.0f}원 (차이)")
+                        st.metric("최신 vs 5년평균", f"{latest_eps:,.0f}원", f"{diff:,.0f}원")
                     
                     st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
                     
+                    # [신규 추가] 멀티플(EV/EBIT) 차트 표시? -> EPS 차트에 집중
                     fig = make_subplots(specs=[[{"secondary_y": True}]])
                     
                     fig.add_trace(go.Bar(
@@ -371,49 +382,19 @@ if df_sheet is not None:
                         textfont=dict(color="white", size=11)
                     ), secondary_y=True)
                     
-                    # -----------------------------------------------------
-                    # [추가] 10년 평균선 (주황색 점선)
-                    # -----------------------------------------------------
-                    fig.add_hline(
-                        y=eps_mean_10, 
-                        line_dash="dash", 
-                        line_color="#FFAB00", 
-                        line_width=2,
-                        secondary_y=True,
-                        annotation_text=f"10년평균: {eps_mean_10:,.0f}", 
-                        annotation_position="top left",
-                        annotation_font_color="#FFAB00"
-                    )
-
-                    # -----------------------------------------------------
-                    # [추가] 5년 평균선 (보라색 점선)
-                    # -----------------------------------------------------
-                    fig.add_hline(
-                        y=eps_mean_5, 
-                        line_dash="dot", 
-                        line_color="#D500F9", 
-                        line_width=2,
-                        secondary_y=True,
-                        annotation_text=f"5년평균: {eps_mean_5:,.0f}", 
-                        annotation_position="bottom left",
-                        annotation_font_color="#D500F9"
-                    )
+                    # 평균선들
+                    fig.add_hline(y=eps_mean_10, line_dash="dash", line_color="#FFAB00", line_width=2, secondary_y=True,
+                                  annotation_text=f"10년평균: {eps_mean_10:,.0f}", annotation_position="top left", annotation_font_color="#FFAB00")
+                    fig.add_hline(y=eps_mean_5, line_dash="dot", line_color="#D500F9", line_width=2, secondary_y=True,
+                                  annotation_text=f"5년평균: {eps_mean_5:,.0f}", annotation_position="bottom left", annotation_font_color="#D500F9")
                     
-                    fig.update_layout(
-                        title=f"{selected} 실적 성장 추이 (Bar: 억원 / Line: 원)", 
-                        template="plotly_dark", 
-                        barmode='group', 
-                        height=550,
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                    )
-                    
+                    fig.update_layout(title=f"{selected} 실적 성장 추이", template="plotly_dark", barmode='group', height=550, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                     fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
                     fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
                     
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
-
     else:
         st.warning("종목 없음")
 else:
