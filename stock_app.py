@@ -9,7 +9,7 @@ import OpenDartReader
 import time
 import datetime
 import re
-from pykrx import stock  # [핵심] KRX 데이터 로딩용
+from pykrx import stock 
 
 # =========================================================
 # 1. 화면 설정 & 스타일
@@ -28,7 +28,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# SSL 인증서 문제 해결
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # =========================================================
@@ -47,7 +46,7 @@ def load_data():
         return None
 
 # =========================================================
-# 3. [핵심] 수정 주식수 & 시가총액 가져오기 (액면분할 대응)
+# 3. 수정 주식수 & 시가총액 가져오기 (액면분할 대응)
 # =========================================================
 @st.cache_data(show_spinner=False)
 def fetch_shares_history(ticker_code):
@@ -56,24 +55,18 @@ def fetch_shares_history(ticker_code):
         start_date = f"{now_year - 12}0101"
         end_date = datetime.datetime.now().strftime("%Y%m%d")
         
-        # 시가총액 & 수정주가 (adjusted=True)
         df_cap = stock.get_market_cap_by_date(start_date, end_date, ticker_code)
         df_price = stock.get_market_ohlcv_by_date(start_date, end_date, ticker_code, adjusted=True)
         
-        # 병합
         df_merged = pd.concat([df_cap['시가총액'], df_price['종가']], axis=1)
         df_merged.columns = ['시가총액', '수정주가']
         
-        # 상장주식수 역산 (시가총액 / 수정주가)
         df_merged['상장주식수'] = df_merged.apply(
             lambda x: x['시가총액'] / x['수정주가'] if x['수정주가'] > 0 else 0, axis=1
         )
 
-        # 연말 데이터 추출
         df_yearly = df_merged.groupby(df_merged.index.year).tail(1)
         df_yearly['연도'] = df_yearly.index.year.astype(str)
-        
-        # 필요한 컬럼만 반환
         result = df_yearly[['연도', '상장주식수', '시가총액']].reset_index(drop=True)
         
         return result
@@ -102,16 +95,13 @@ def fetch_core_financials(api_key, ticker_code):
     try:
         for year in years:
             if len(result_data) >= 10: break
-                
-            status_text.text(f"🔍 {year}년 재무데이터 정밀 분석 중...")
-            
+            status_text.text(f"🔍 {year}년 재무데이터 분석 중...")
             df = None
             try: df = dart.finstate(ticker_code, year, reprt_code='11011')
             except: pass 
 
             if df is not None and not df.empty and 'account_nm' in df.columns:
                 df['account_clean'] = df['account_nm'].astype(str).str.replace(' ', '').str.strip()
-
                 mask_sales = df['account_clean'].str.contains('매출액|영업수익') & ~df['account_clean'].str.contains('원가|총이익|미실현')
                 mask_op = df['account_clean'].str.contains('영업이익') & ~df['account_clean'].str.contains('기타|금융|관계|지분')
                 mask_net = df['account_clean'].str.contains('당기순이익') & ~df['account_clean'].str.contains('포괄') & ~df['account_clean'].str.contains('비지배')
@@ -129,7 +119,6 @@ def fetch_core_financials(api_key, ticker_code):
 
                 df_cfs = df[df['fs_div'] == 'CFS']
                 df_ofs = df[df['fs_div'] == 'OFS']
-
                 sales = extract_value(df_cfs, mask_sales)
                 op_income = extract_value(df_cfs, mask_op)
                 net_income = extract_value(df_cfs, mask_net)
@@ -139,12 +128,7 @@ def fetch_core_financials(api_key, ticker_code):
                 if net_income == 0: net_income = extract_value(df_ofs, mask_net)
 
                 if sales != 0 or op_income != 0:
-                    result_data.append({
-                        '연도': str(year),
-                        '매출액': sales,
-                        '영업이익': op_income,
-                        '순이익': net_income
-                    })
+                    result_data.append({'연도': str(year), '매출액': sales, '영업이익': op_income, '순이익': net_income})
             time.sleep(0.05)
 
         status_text.empty()
@@ -152,7 +136,6 @@ def fetch_core_financials(api_key, ticker_code):
         if result_data:
             df_dart = pd.DataFrame(result_data)
             df_shares = fetch_shares_history(ticker_code)
-            
             if not df_shares.empty:
                 df_final = pd.merge(df_dart, df_shares, on='연도', how='left')
             else:
@@ -161,29 +144,9 @@ def fetch_core_financials(api_key, ticker_code):
                 df_final['시가총액'] = 0
             
             df_final = df_final.sort_values('연도', ascending=False)
-            
-            # 1. EPS 계산
-            def calc_eps(row):
-                try:
-                    income = row['순이익']
-                    shares = row['상장주식수']
-                    if shares > 0: return income / shares
-                    return 0
-                except: return 0
-            
-            # 2. EV/EBIT (대용치) 계산
-            def calc_ev_ebit(row):
-                try:
-                    cap = row['시가총액']
-                    op_income = row['영업이익']
-                    if op_income > 0: return cap / op_income
-                    return 0
-                except: return 0
+            df_final['EPS(보정)'] = df_final.apply(lambda r: r['순이익']/r['상장주식수'] if r['상장주식수']>0 else 0, axis=1)
+            df_final['EV/EBIT(배)'] = df_final.apply(lambda r: r['시가총액']/r['영업이익'] if r['영업이익']>0 else 0, axis=1)
 
-            df_final['EPS(보정)'] = df_final.apply(calc_eps, axis=1)
-            df_final['EV/EBIT(배)'] = df_final.apply(calc_ev_ebit, axis=1)
-
-            # 단위 정리
             df_final['매출액(억)'] = (df_final['매출액'] / 100000000).round(0)
             df_final['영업이익(억)'] = (df_final['영업이익'] / 100000000).round(0)
             df_final['순이익(억)'] = (df_final['순이익'] / 100000000).round(0)
@@ -193,11 +156,9 @@ def fetch_core_financials(api_key, ticker_code):
 
             view_cols = ['연도', '매출액(억)', '영업이익(억)', '순이익(억)', '시가총액(억)', '멀티플(배)', 'EPS(원)']
             df_view = df_final[view_cols].set_index('연도').T
-            
             return df_view, df_final.head(10), "OK"
         else:
             return None, None, "데이터 없음"
-
     except Exception as e:
         status_text.empty()
         return None, None, f"오류: {e}"
@@ -242,7 +203,6 @@ df_sheet = load_data()
 if df_sheet is not None:
     st.sidebar.markdown("## 🌍 시장 선택")
     market_choice = st.sidebar.radio("보고 싶은 시장", ["한국(KRW)", "미국(USD)"])
-    
     if market_choice == "한국(KRW)":
         filtered_df = df_sheet[df_sheet['Market'] == "한국(KRW)"]
     else:
@@ -272,31 +232,25 @@ if df_sheet is not None:
             def clean_val(v):
                 try: return float(str(v).replace(',', ''))
                 except: return 0
-            
             t_min = clean_val(s_info.get('보수적적정가', 0))
             t_max = clean_val(s_info.get('최대미래가치', 0))
             t_buy = clean_val(s_info.get('매수가치', 0))
-            
             ticker_obj = yf.Ticker(yf_code)
             history = ticker_obj.history(period="1d")
             current_p = history['Close'].iloc[-1] if not history.empty else 0
-            
             gap_min = ((t_min - current_p)/current_p)*100 if current_p else 0
             gap_max = ((t_max - current_p)/current_p)*100 if current_p else 0
             gap_buy = ((t_buy - current_p)/current_p)*100 if current_p else 0
             cagr_min = ((t_min/current_p)**(1/7)-1)*100 if current_p and t_min else 0
             cagr_max = ((t_max/current_p)**(1/7)-1)*100 if current_p and t_max else 0
-            
             grade = s_info.get('투자등급', '미분류') 
             badge_color = {"코어": "#2962FF", "위성": "#FFAB00", "시가존": "#2E7D32"}.get(grade, "#616161")
             badge_icon = {"코어": "💎", "위성": "🛰️", "시가존": "🚬"}.get(grade, "❔")
             badge_text = {"코어": "CORE", "위성": "SATELLITE", "시가존": "시가존"}.get(grade, "미지정")
-            
         except:
             current_p = 0; gap_min=gap_max=gap_buy=cagr_min=cagr_max=0
 
         st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
-
         tab1, tab2 = st.tabs(["🚀 종목 대시보드", "💎 가치분석 (매출/영업/EPS)"])
 
         with tab1:
@@ -311,15 +265,12 @@ if df_sheet is not None:
             with c4: 
                 st.metric("🚀 최대 미래가치", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
                 if cagr_max: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_max:+.1f}%</div>", unsafe_allow_html=True)
-
             st.write("---")
             col1, col2 = st.columns(2)
             with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
             with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, current_price=None, target_min=t_min, target_max=t_max, target_buy=t_buy)
-            
             st.subheader("📌 핵심 요약 (메모)")
             st.info(s_info.get('메모', '메모 없음'))
-            
             st.subheader("💡 심층 리포트")
             note = s_info.get('노트링크', '')
             if note and "docs.google.com" in str(note):
@@ -330,41 +281,22 @@ if df_sheet is not None:
 
         with tab2:
             st.subheader(f"📊 {selected} 최근 10년 핵심 실적 (매출/영업/EPS)")
-            
             if not is_korea:
                 st.info("미국 주식은 지원하지 않습니다.")
             else:
                 DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
-                
                 with st.spinner(f"DART 재무정보 + KRX 수정주가 병합 중... ({selected})"):
                     display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
-                
                 if display_df is not None:
-                    # 데이터 정렬 (과거 -> 최신)
                     raw_data = raw_data.sort_values('연도')
                     eps_series = raw_data['EPS(원)']
-
-                    # ---------------------------------------------------------
-                    # [계산 영역]
-                    # ---------------------------------------------------------
-                    # 1. 평균 및 최신 실적
                     eps_mean_10 = eps_series.mean()
                     eps_mean_5 = eps_series.tail(5).mean()
                     latest_eps = eps_series.iloc[-1]
 
-                    # 2. [상단] 최신 EPS vs 10년 평균 성장률
-                    if eps_mean_10 > 0:
-                        latest_vs_10y_rate = ((latest_eps - eps_mean_10) / eps_mean_10) * 100
-                    else:
-                        latest_vs_10y_rate = 0
+                    latest_vs_10y_rate = ((latest_eps - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
+                    momentum_avg = ((eps_mean_5 - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
 
-                    # 3. [하단] 체력 모멘텀 (5년 평균 vs 10년 평균)
-                    if eps_mean_10 > 0:
-                        momentum_avg = ((eps_mean_5 - eps_mean_10) / eps_mean_10) * 100
-                    else:
-                        momentum_avg = 0
-
-                    # 4. CAGR (연평균 성장률)
                     df_max = raw_data
                     period_max = len(df_max)
                     label_max = f"{period_max}년 연평균 성장 (CAGR)" if period_max < 10 else "10년 연평균 성장 (CAGR)"
@@ -372,88 +304,38 @@ if df_sheet is not None:
 
                     def calculate_cagr(df):
                         if len(df) < 2: return "데이터 부족"
-                        start_eps = df['EPS(원)'].iloc[0]
-                        end_eps = df['EPS(원)'].iloc[-1]
-                        years = len(df) - 1
+                        start_eps = df['EPS(원)'].iloc[0]; end_eps = df['EPS(원)'].iloc[-1]; years = len(df)-1
                         if start_eps <= 0: return "계산 불가(적자)"
                         try:
-                            cagr = (end_eps / start_eps) ** (1 / years) - 1
+                            cagr = (end_eps / start_eps) ** (1/years) - 1
                             return f"{cagr*100:+.1f}%"
                         except: return "계산 오류"
+                    cagr_max_str = calculate_cagr(df_max); cagr_5_str = calculate_cagr(df_5)
 
-                    cagr_max_str = calculate_cagr(df_max)
-                    cagr_5_str = calculate_cagr(df_5)
-
-                    # ---------------------------------------------------------
-                    # [화면 배치] 요청대로 수정됨 (delta_color 복구)
-                    # ---------------------------------------------------------
-                    
-                    # [파트 1] 기초 체력 분석 (최신 vs 평균)
-                    st.markdown("##### 1️⃣ 기초 체력 분석 (최신 실적 vs 장기 평균)")
+                    st.markdown("##### 기초 체력 분석 (최신 실적 vs 장기 평균)")
                     c_t1, c_t2, c_t3 = st.columns(3)
                     with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
                     with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
-                    
-                    # 여기가 요청하신 '최신 EPS vs 10년 평균' (초록색 부활!)
-                    with c_t3: 
-                        st.metric("최신 EPS 성장률 (vs 10년평균)", 
-                                  f"{latest_vs_10y_rate:+.1f}%", 
-                                  f"{latest_vs_10y_rate:+.1f}%", 
-                                  delta_color="normal")
-                    
+                    with c_t3: st.metric("최신 EPS 성장률 (vs 10년평균)", f"{latest_vs_10y_rate:+.1f}%", delta=f"{latest_vs_10y_rate:+.1f}%")
                     st.write("---")
 
-                    # [파트 2] 추세 분석 (CAGR & 모멘텀)
-                    st.markdown("##### 2️⃣ 추세 및 모멘텀 분석")
+                    st.markdown("##### 추세 분석 (CAGR & 모멘텀)")
                     c_b1, c_b2, c_b3 = st.columns(3)
                     with c_b1: st.metric(label_max, cagr_max_str)
                     with c_b2: st.metric("최근 5년 연평균 성장", cagr_5_str)
-                    
-                    # 여기가 내려온 '체력 모멘텀' (초록색 부활!)
-                    with c_b3: 
-                        st.metric("체력 모멘텀 (5년평균 vs 10년평균)", 
-                                  f"{momentum_avg:+.1f}%", 
-                                  f"{momentum_avg:+.1f}%", 
-                                  delta_color="normal")
-
+                    with c_b3: st.metric("성장 모멘텀 (5년평균 vs 10년평균)", f"{momentum_avg:+.1f}%", delta=f"{momentum_avg:+.1f}%")
                     st.write("---")
-                    
-                    # ---------------------------------------------------------
-                    # [파트 3] 표 & 차트 (유지)
-                    # ---------------------------------------------------------
-                    st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
-                    
-                    fig = make_subplots(specs=[[{"secondary_y": True}]])
-                    
-                    fig.add_trace(go.Bar(
-                        x=raw_data['연도'], y=raw_data['매출액(억)'], 
-                        name='매출액(좌측)', marker_color='#90CAF9', opacity=0.6
-                    ), secondary_y=False)
-                    
-                    fig.add_trace(go.Bar(
-                        x=raw_data['연도'], y=raw_data['영업이익(억)'], 
-                        name='영업이익(좌측)', marker_color='#2962FF'
-                    ), secondary_y=False)
 
-                    fig.add_trace(go.Scatter(
-                        x=raw_data['연도'], y=raw_data['EPS(원)'], 
-                        name='EPS(보정됨)', mode='lines+markers+text',
-                        line=dict(color='#00E676', width=3),
-                        marker=dict(size=8, color='#00E676', symbol='diamond'),
-                        text=raw_data['EPS(원)'].apply(lambda x: f"{x:,.0f}"),
-                        textposition="top center",
-                        textfont=dict(color="white", size=11)
-                    ), secondary_y=True)
-                    
-                    fig.add_hline(y=eps_mean_10, line_dash="dash", line_color="#FFAB00", line_width=2, secondary_y=True,
-                                  annotation_text=f"10년평균: {eps_mean_10:,.0f}", annotation_position="top left", annotation_font_color="#FFAB00")
-                    fig.add_hline(y=eps_mean_5, line_dash="dot", line_color="#D500F9", line_width=2, secondary_y=True,
-                                  annotation_text=f"5년평균: {eps_mean_5:,.0f}", annotation_position="bottom left", annotation_font_color="#D500F9")
-                    
+                    st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
+                    fig = make_subplots(specs=[[{"secondary_y": True}]])
+                    fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['매출액(억)'], name='매출액(좌측)', marker_color='#90CAF9', opacity=0.6), secondary_y=False)
+                    fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['영업이익(억)'], name='영업이익(좌측)', marker_color='#2962FF'), secondary_y=False)
+                    fig.add_trace(go.Scatter(x=raw_data['연도'], y=raw_data['EPS(원)'], name='EPS(보정됨)', mode='lines+markers+text', line=dict(color='#00E676', width=3), marker=dict(size=8, color='#00E676', symbol='diamond'), text=raw_data['EPS(원)'].apply(lambda x: f"{x:,.0f}"), textposition="top center", textfont=dict(color="white", size=11)), secondary_y=True)
+                    fig.add_hline(y=eps_mean_10, line_dash="dash", line_color="#FFAB00", line_width=2, secondary_y=True, annotation_text=f"10년평균: {eps_mean_10:,.0f}", annotation_position="top left", annotation_font_color="#FFAB00")
+                    fig.add_hline(y=eps_mean_5, line_dash="dot", line_color="#D500F9", line_width=2, secondary_y=True, annotation_text=f"5년평균: {eps_mean_5:,.0f}", annotation_position="bottom left", annotation_font_color="#D500F9")
                     fig.update_layout(title=f"{selected} 실적 성장 추이", template="plotly_dark", barmode='group', height=550, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                     fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
                     fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
-                    
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
