@@ -54,7 +54,6 @@ def load_data():
 # [정렬 엔진 1] 계정 과목(행) 정렬
 # ---------------------------------------------------------
 def sort_financial_accounts(df, report_type):
-    # 보고서 이름에 따라 우선순위 리스트 결정
     if '손익' in report_type or '포괄' in report_type:
         order_list = [
             '매출액', '수익(매출액)', '영업수익', 
@@ -110,21 +109,19 @@ def sort_financial_accounts(df, report_type):
     return df.reindex(sorted_index)
 
 # ---------------------------------------------------------
-# [정렬 엔진 2] 표 종류(드롭다운) 정렬
+# [정렬 엔진 2] 표 종류 정렬
 # ---------------------------------------------------------
 def sort_report_types(options):
     priority = ['포괄손익계산서', '손익계산서', '재무상태표', '현금흐름표', '자본변동표']
-    
     def get_priority(name):
         for i, key in enumerate(priority):
             if key in name:
                 return i
         return 99
-
     return sorted(options, key=get_priority)
 
 
-# 4. DART 데이터 수집 함수 (sj_div 코드 매핑 추가)
+# 4. DART 데이터 수집 함수 (강력한 이름 매핑 적용)
 @st.cache_data(show_spinner=False) 
 def fetch_all_financials(api_key, ticker_code, mode="연간"):
     try:
@@ -151,16 +148,6 @@ def fetch_all_financials(api_key, ticker_code, mode="연간"):
             '11011': '4Q(연간)'
         }
     
-    # [핵심] 영어 코드(sj_div)를 한글 표준 이름으로 매핑하는 사전
-    # 이 코드가 현금흐름표를 강제로 찾아냅니다.
-    standard_names = {
-        'BS': '재무상태표',
-        'IS': '손익계산서',
-        'CIS': '포괄손익계산서',
-        'CF': '현금흐름표',
-        'SCE': '자본변동표'
-    }
-
     all_data_list = []
     status_text = st.empty()
     
@@ -186,10 +173,20 @@ def fetch_all_financials(api_key, ticker_code, mode="연간"):
 
                     df['Period'] = period_name
                     
-                    # [핵심 로직] sj_div(영어코드)를 보고 sj_nm(한글이름)을 강제로 통일
-                    # 예: '연결 현금흐름표' -> '현금흐름표'로 변경됨
-                    if 'sj_div' in df.columns:
-                        df['sj_nm'] = df['sj_div'].map(standard_names).fillna(df['sj_nm'])
+                    # [핵심] sj_div(코드)가 없어도 sj_nm(이름)에 '현금'이 있으면 '현금흐름표'로 강제 통합
+                    if 'sj_nm' in df.columns:
+                        # 1. 코드 기반 매핑
+                        if 'sj_div' in df.columns:
+                            standard_map = {'BS':'재무상태표', 'IS':'손익계산서', 'CIS':'포괄손익계산서', 'CF':'현금흐름표', 'SCE':'자본변동표'}
+                            df['sj_nm'] = df['sj_div'].map(standard_map).fillna(df['sj_nm'])
+                        
+                        # 2. 이름 기반 강제 매핑 (코드가 비어있을 경우 대비)
+                        df.loc[df['sj_nm'].str.contains('현금흐름', na=False), 'sj_nm'] = '현금흐름표'
+                        df.loc[df['sj_nm'].str.contains('재무상태', na=False), 'sj_nm'] = '재무상태표'
+                        df.loc[df['sj_nm'].str.contains('포괄손익', na=False), 'sj_nm'] = '포괄손익계산서'
+                        # 손익계산서는 포괄손익과 겹치지 않게 주의
+                        df.loc[(df['sj_nm'].str.contains('손익계산', na=False)) & (~df['sj_nm'].str.contains('포괄', na=False)), 'sj_nm'] = '손익계산서'
+                        df.loc[df['sj_nm'].str.contains('자본변동', na=False), 'sj_nm'] = '자본변동표'
 
                     cols = ['Period', 'fs_div', 'sj_nm', 'account_nm', 'thstrm_amount']
                     valid_cols = [c for c in cols if c in df.columns]
@@ -335,7 +332,6 @@ if df_sheet is not None:
                 st.image(s_info.get('이미지URL'), use_container_width=True)
                 if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
 
-        # --- [탭 2] 재무제표 (분기 + 순서 정렬 + 매핑) ---
         with tab2:
             if not is_korea:
                 st.info("미국 주식은 지원하지 않습니다.")
@@ -350,17 +346,16 @@ if df_sheet is not None:
                     period_mode = st.radio("기간", ["연간", "분기"], horizontal=True, index=0)
 
                 with st.spinner(f"📊 {selected} ({period_mode}) 데이터 수집 중..."):
-                    # 키 값을 바꿔서 강제 리로딩 유도
                     unique_key = f"{selected}_{period_mode}"
                     if 'last_key' not in st.session_state or st.session_state.last_key != unique_key:
-                        fetch_all_financials.clear() # 캐시 초기화 (데이터 꼬임 방지)
+                        fetch_all_financials.clear() 
                         st.session_state.last_key = unique_key
                         
                     raw_df, msg = fetch_all_financials(DART_API_KEY, dart_code, period_mode)
                 
                 with col_ui3:
                     if raw_df is not None:
-                        # [핵심] 표 종류 정렬해서 보여주기 (현금흐름표가 뒤로 가도록)
+                        # [필수] 종류 정렬
                         raw_options = raw_df['sj_nm'].unique()
                         sorted_options = sort_report_types(raw_options) 
                         selected_sj = st.selectbox("표 종류", sorted_options, index=0)
@@ -392,9 +387,22 @@ if df_sheet is not None:
                         st.download_button("💾 엑셀 다운로드", csv, f"{selected}_{selected_sj}.csv", "text/csv")
                         
                     else:
-                        st.warning(f"선택하신 '{selected_sj}' 데이터가 '{fs_mode}' 기준으로는 없습니다.")
+                        st.warning(f"선택하신 '{selected_sj}' 데이터가 '{fs_mode}' 기준으로는 없습니다. (만약 현금흐름표가 없다면 아래 '데이터 정밀 진단기'를 확인해주세요)")
                 elif raw_df is None:
                     st.error(f"데이터를 가져오지 못했습니다. ({msg})")
+
+                # -----------------------------------------------
+                # [🔍 데이터 정밀 진단기]
+                # API가 실제로 뭘 가져왔는지 뜯어보는 디버깅용 창입니다.
+                # 현금흐름표가 죽어도 안 뜨면 이걸 열어서 보여주세요.
+                # -----------------------------------------------
+                with st.expander("🔍 데이터 정밀 진단기 (안 될 때만 열어보세요)"):
+                    if raw_df is not None:
+                        st.write("DART에서 감지된 표 목록 (sj_nm):", raw_df['sj_nm'].unique())
+                        st.write("샘플 데이터 (상위 50행):")
+                        st.dataframe(raw_df.head(50))
+                    else:
+                        st.write("데이터가 로드되지 않았습니다.")
 
     else:
         st.warning("종목 없음")
