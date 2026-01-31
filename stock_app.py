@@ -131,16 +131,25 @@ if df_sheet is not None:
                 gap_max = ((t_max - current_p) / current_p) * 100
                 gap_buy = ((t_buy - current_p) / current_p) * 100
                 
-                # --- 7년 기준 CAGR 계산 (공식 유지) ---
-                if t_max > 0:
-                    cagr = ((t_max / current_p) ** (1/7) - 1) * 100
+                # --- 7년 연복리(CAGR) 계산 ---
+                # 1. 보수적 적정가 수익률
+                if t_min > 0:
+                    cagr_min = ((t_min / current_p) ** (1/7) - 1) * 100
                 else:
-                    cagr = 0
+                    cagr_min = 0
+                
+                # 2. 최대 미래가치 수익률
+                if t_max > 0:
+                    cagr_max = ((t_max / current_p) ** (1/7) - 1) * 100
+                else:
+                    cagr_max = 0
             else:
-                gap_min, gap_max, gap_buy, cagr = 0, 0, 0, 0
+                gap_min, gap_max, gap_buy = 0, 0, 0
+                cagr_min, cagr_max = 0, 0
         except:
-            current_p, t_min, t_max, t_buy, cagr = 0, 0, 0, 0, 0
+            current_p, t_min, t_max, t_buy = 0, 0, 0, 0
             gap_min, gap_max, gap_buy = 0, 0, 0
+            cagr_min, cagr_max = 0, 0
 
         # 상단 지표 출력
         st.title(f"🚀 {selected} ({ticker_code}) 기업 가치")
@@ -155,14 +164,21 @@ if df_sheet is not None:
         
         with c3: 
             st.metric("🛡️ 보수적 적정가 (안전)", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
-        
-        # [NEW] 문구 변경: 7~10년 연평균수익률
-        with c4: 
-            st.metric("🚀 최대 미래가치 (목표)", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
-            if cagr != 0:
+            # [NEW] 보수적 적정가 수익률 배지
+            if cagr_min != 0:
                 st.markdown(f"""
                     <div style="background-color: #7B1FA2; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; text-align: center; display: inline-block; margin-top: -15px; font-size: 0.9em;">
-                        📈 7~10년 연평균수익률 {cagr:+.1f}%
+                        📈 7~10년 연평균수익률 {cagr_min:+.1f}%
+                    </div>
+                """, unsafe_allow_html=True)
+        
+        with c4: 
+            st.metric("🚀 최대 미래가치 (목표)", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
+            # [NEW] 최대 미래가치 수익률 배지
+            if cagr_max != 0:
+                st.markdown(f"""
+                    <div style="background-color: #7B1FA2; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; text-align: center; display: inline-block; margin-top: -15px; font-size: 0.9em;">
+                        📈 7~10년 연평균수익률 {cagr_max:+.1f}%
                     </div>
                 """, unsafe_allow_html=True)
 
