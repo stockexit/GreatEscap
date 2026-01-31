@@ -11,7 +11,7 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# 2. SSL 에러 방지 (로컬 실행 필수)
+# 2. SSL 에러 방지
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # 3. 데이터 로딩 및 시장 분류
@@ -31,10 +31,9 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수 (목표가 선 선택 표시 및 기간 버그 수술)
+# 4. 차트 그리기 함수 (목표가 수치 아이콘 추가)
 def draw_chart(ticker, period, title, unit, target_p=None):
     try:
-        # 3개월은 일봉('1d'), 5년은 데이터 손실 방지를 위해 주봉('1wk')으로 설정
         interval = "1d" if period == "3mo" else "1wk"
         df = yf.download(ticker, period=period, interval=interval)
         
@@ -49,14 +48,24 @@ def draw_chart(ticker, period, title, unit, target_p=None):
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # [수정] 5년 차트일 때만(target_p가 있을 때만) 빨간 점선을 긋습니다
+        # [핵심] 5년 차트일 때만 빨간 점선 + 수치 아이콘(태그) 추가
         if target_p:
-            fig.add_hline(
-                y=target_p, 
-                line_dash="dash", 
-                line_color="red", 
-                annotation_text=f"사장님 목표가 ({unit}{target_p:,.0f})",
-                annotation_position="top right"
+            # 1. 수평선 긋기
+            fig.add_hline(y=target_p, line_dash="dash", line_color="red")
+            
+            # 2. 수치 아이콘(말풍선) 달기
+            fig.add_annotation(
+                x=df.index[-1], # 차트 가장 오른쪽 끝
+                y=target_p,
+                text=f"🎯 {unit}{target_p:,.0f}",
+                showarrow=False,
+                yshift=10, # 선보다 살짝 위에 띄움
+                font=dict(color="white", size=12, family="Arial"),
+                bgcolor="red", # 빨간색 배경
+                bordercolor="red",
+                borderwidth=2,
+                borderpad=4,
+                opacity=0.9
             )
         
         fig.update_layout(
@@ -74,7 +83,7 @@ def draw_chart(ticker, period, title, unit, target_p=None):
 df_sheet = load_data()
 
 if df_sheet is not None:
-    # 사이드바: 한국 시장 우선
+    # 사이드바 설정 (한국 시장 우선)
     st.sidebar.markdown("## 🌍 시장 선택")
     market_choice = st.sidebar.radio("보고 싶은 시장을 골라주세요", ["한국(KRW)", "미국(USD)"])
     
@@ -100,7 +109,7 @@ if df_sheet is not None:
 
     st.title(f"🚀 {selected} ({ticker_code})")
     
-    # 상단 지표 (image_d99a98 괄호/따옴표 수술 완료)
+    # 상단 지표 (image_d99a98 수술 완료)
     c1, c2, c3 = st.columns(3)
     c1.metric("실시간 현재가", f"{unit}{current_p:{fmt}}")
     c2.metric("사장님 목표가", f"{unit}{target_p:{fmt}}", delta_color="off")
@@ -108,18 +117,18 @@ if df_sheet is not None:
 
     st.write("---")
 
-    # 차트 배치 (image_da7759 콜론 수술 완료)
+    # 차트 배치 (image_da7759 수술 완료)
     col1, col2 = st.columns(2)
     with col1:
         # 3개월 차트: 선 없이 깔끔하게
         draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
     with col2:
-        # 5년 차트: 빨간 목표가 선 포함
+        # 5년 차트: 빨간 목표가 선 + 수치 아이콘 포함
         draw_chart(ticker_code, "5y", "🏛️ 5년 장기 성장", unit, target_p)
 
     st.write("---")
-    # 하단 메모 (image_da1d62 '메메' -> '메모' 수술 완료)
+    # 하단 메모 (image_da1d62 '메메' -> '메모' 영구 박멸)
     st.subheader("💡 분석 메모")
     st.success(f"{s_info['메모']}") 
 else:
-    st.error("데이터 로딩 실패! 구글 시트 주소를 확인하세요.")
+    st.error("데이터 로딩 실패! 구글 시트 연결을 확인하세요.")
