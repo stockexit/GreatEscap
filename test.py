@@ -10,17 +10,17 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# 2. [수정] 메뉴 버튼은 살리고 지저분한 요소만 가리는 정밀 CSS
+# 2. [수정] 메뉴 버튼은 살리고 지저분한 로고/여백만 제거하는 CSS
 st.markdown("""
     <style>
     /* 하단 푸터와 툴바만 제거 */
     footer {visibility: hidden;}
     div[data-testid="stToolbar"] {visibility: hidden !important;}
     
-    /* 모바일 메뉴 버튼(헤더)은 살리되, 불필요한 여백만 제거 */
+    /* 헤더는 숨기지 않고, 배경을 투명하게 해서 메뉴 버튼만 남김 */
     header[data-testid="stHeader"] {
         background-color: rgba(0,0,0,0);
-        height: 3rem;
+        color: white;
     }
     
     /* 사이드바 너비 고정 */
@@ -44,12 +44,12 @@ df_sheet = load_data(url)
 
 # 4. 사이드바 종목 선택 메뉴
 if df_sheet is not None and not df_sheet.empty:
-    st.sidebar.markdown("## 🎯 종목 리서치")
+    st.sidebar.markdown("## 🎯 분석 종목 리스트")
     st.sidebar.write("---")
     
     stock_names = df_sheet['종목명'].unique().tolist()
-    # 사이드바에 선택창 배치
-    selected = st.sidebar.selectbox("분석할 종목을 고르세요 👇", stock_names)
+    # 선택창
+    selected = st.sidebar.selectbox("종목을 고르세요 👇", stock_names)
     s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
     
     st.sidebar.write("---")
@@ -61,14 +61,14 @@ else:
 # 5. 차트 그리기 함수 (SyntaxError 모든 지점 완벽 수술)
 def draw_chart(ticker, period, title):
     try:
-        # else 구문 추가
+        # try-except 구조 완성
         interval = "1wk" if period == "5y" else "1d"
         df = yf.download(ticker, period=period, interval=interval)
         
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
-        # f-string 따옴표 마감
+        # st.write 괄호 닫기
         if df.empty:
             return st.write(f"⚠️ {title}: 데이터 없음")
 
@@ -77,15 +77,30 @@ def draw_chart(ticker, period, title):
             low=df['Low'], close=df['Close'], name=title
         )])
 
-        # dict 괄호 및 레이아웃 설정
+        # 문자열 마감 완벽 체크
         fig.update_layout(
             title=dict(text=title, font=dict(size=18)),
             height=500, 
             template="plotly_dark",
             xaxis_rangeslider_visible=False,
             margin=dict(l=10, r=10, b=10, t=50),
-            yaxis_type="log" if period == "5y" else "linear",
-            xaxis=dict(fixedrange=True),
-            yaxis=dict(fixedrange=True)
+            yaxis_type="log" if period == "5y" else "linear"
         )
         return st.plotly_chart(fig, use_container_width=True)
+    except:
+        return st.error(f"⚠️ {title}: 데이터 로드 실패")
+
+# 6. 메인 화면 구성
+st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
+
+# 함수 호출 괄호 완벽 마감
+col1, col2 = st.columns(2)
+with col1:
+    draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
+with col2:
+    draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장")
+
+st.write("---")
+
+# 7. 하단 리포트 f-string 중괄호 완벽 마감
+c_a
