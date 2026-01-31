@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# [스타일] 탭 글씨 크기 키우기 + 표 헤더 강조
+# [스타일] 탭 글씨 크기 키우기 + 표 헤더 디자인
 # ---------------------------------------------------------
 st.markdown("""
 <style>
@@ -25,10 +25,10 @@ st.markdown("""
         font-size: 20px !important;
         font-weight: bold !important;
     }
-    /* 테이블 헤더 색상 변경 (선택사항) */
     thead tr th {
         background-color: #262730 !important;
         color: white !important;
+        font-size: 16px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -50,7 +50,7 @@ def load_data():
     except:
         return None
 
-# 4. [업그레이드] 상세 재무제표 수집 함수
+# 4. [업그레이드] 상세 재무제표 수집 함수 (연도 역순 + 모든 항목)
 @st.cache_data(show_spinner=False) 
 def fetch_dart_data(api_key, ticker_code, stock_name):
     try:
@@ -63,23 +63,29 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
 
     now_year = datetime.datetime.now().year 
     end_year = now_year
-    start_year = now_year - 5 # 항목이 많아져서 최근 5~6년으로 집중 (원하시면 -10 수정 가능)
+    start_year = now_year - 5 # 최근 5~6년 집중 (데이터 양이 많아져서)
     
     financial_list = []
     
     # -----------------------------------------------------------
-    # [설정] 가져올 항목들과 순서 정의 (표준 손익계산서 순서)
+    # [핵심] 재무제표 항목 정의 (검색어 확장)
     # -----------------------------------------------------------
-    # (표시할 이름, DART에서 찾을 키워드 정규식)
+    # (표시 이름, 검색할 키워드)
+    # 순서를 보장하기 위해 앞에 번호를 붙이고 나중에 뗍니다.
     target_items = [
-        ('1.매출액', '매출액|영업수익'),
-        ('2.매출원가', '매출원가'),
-        ('3.매출총이익', '매출총이익'),
-        ('4.판매비와관리비', '판매비와관리비'),
-        ('5.영업이익', '영업이익'),
-        ('6.법인세차감전이익', '법인세비용차감전|법인세차감전'),
-        ('7.법인세비용', '법인세비용'),
-        ('8.당기순이익', '당기순이익')
+        ('01.매출액', '매출액|영업수익|수익'),
+        ('02.매출원가', '매출원가|영업비용'), # 영업비용은 서비스업 등에서 원가 대신 쓰임
+        ('03.매출총이익', '매출총이익'),
+        ('04.판매비와관리비', '판매비와관리비|판매비및관리비|판관비'),
+        ('05.영업이익', '영업이익'),
+        ('06.금융수익', '금융수익'),
+        ('07.금융원가', '금융원가|금융비용'),
+        ('08.기타수익', '기타수익|기타영업외수익'),
+        ('09.기타비용', '기타비용|기타영업외비용'),
+        ('10.법인세차감전이익', '법인세비용차감전|법인세차감전'),
+        ('11.법인세비용', '법인세비용|법인세'),
+        ('12.당기순이익', '당기순이익'),
+        ('13.총포괄손익', '총포괄손익')
     ]
     
     try:
@@ -100,20 +106,26 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
                     elif 'OFS' in df['fs_div'].values:
                         df = df[df['fs_div'] == 'OFS']
                 
-                # --- 항목 매핑 로직 ---
+                # --- 항목 매핑 로직 (개선됨) ---
                 for label, pattern in target_items:
-                    # 해당 키워드가 포함된 행 찾기 (원가 제외 로직 등 포함)
-                    if label == '1.매출액':
-                        mask = df['account_nm'].str.contains(pattern) & ~df['account_nm'].str.contains('원가')
-                    elif label == '8.당기순이익':
-                        mask = df['account_nm'].str.contains(pattern) & ~df['account_nm'].str.contains('포괄|지배|비지배')
-                    else:
-                        mask = df['account_nm'].str.contains(pattern)
+                    # 1. 일단 패턴이 포함된 행을 찾음
+                    mask = df['account_nm'].str.contains(pattern, na=False)
                     
+                    # 2. 예외 처리 (원하지 않는 것 제외)
+                    if '매출액' in label:
+                        # 매출원가가 매출액에 잡히지 않도록 제외
+                        mask = mask & ~df['account_nm'].str.contains('원가|총이익', na=False)
+                    elif '당기순이익' in label:
+                        # 지배/비지배/포괄 제외하고 순수 당기순이익만
+                        mask = mask & ~df['account_nm'].str.contains('포괄|지배|비지배', na=False)
+                    elif '영업이익' in label:
+                         # 영업이익(손실)만 잡고, 기타영업이익 제외
+                         mask = mask & ~df['account_nm'].str.contains('기타', na=False)
+
                     found_row = df[mask]
                     
                     if not found_row.empty:
-                        # 금액 추출 (콤마 제거)
+                        # 여러 개가 잡히면 첫 번째 것 사용 (보통 가장 상위 항목)
                         amount_str = str(found_row.iloc[0]['thstrm_amount'])
                         try:
                             amount = float(amount_str.replace(',', ''))
@@ -131,17 +143,22 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
         if financial_list:
             df_final = pd.DataFrame(financial_list)
             
-            # 피벗 (행: Item, 열: Year) -> 우리가 아는 재무제표 모양
+            # 피벗 (행: Item, 열: Year)
             df_pivot = df_final.pivot_table(index='Item', columns='Year', values='Amount', aggfunc='sum')
             
             # 단위 변환 (억원)
             df_pivot = df_pivot / 100000000
             df_pivot = df_pivot.round(0)
             
-            # 순서 정렬 (1.매출액 ~ 8.당기순이익 순서대로)
+            # 정렬 1: 항목 순서대로 (01.매출액 ~ 13.총포괄손익)
             df_pivot = df_pivot.sort_index()
             
-            # 인덱스 이름 깔끔하게 (앞에 숫자 제거)
+            # 정렬 2: 연도 최신순 (오른쪽 -> 왼쪽 역순 정렬)
+            # columns를 역순으로 정렬해서 적용
+            cols = sorted(df_pivot.columns, reverse=True)
+            df_pivot = df_pivot[cols]
+
+            # 인덱스 이름 깔끔하게 (앞에 숫자 '01.' 제거)
             df_pivot.index = [idx.split('.')[1] for idx in df_pivot.index]
             
             return df_pivot, "OK"
@@ -284,7 +301,6 @@ if df_sheet is not None:
             
             if is_korea:
                 if dart_df is not None:
-                    # 표를 더 예쁘게 표시
                     st.dataframe(dart_df, use_container_width=True, height=600)
                     
                     csv = dart_df.to_csv().encode('utf-8-sig')
@@ -295,7 +311,7 @@ if df_sheet is not None:
                         mime='text/csv',
                     )
                 else:
-                    st.warning(f"데이터가 없거나 금융업(은행/보험) 종목일 수 있습니다. (제조업/서비스업 기준)")
+                    st.warning(f"데이터가 없거나 금융업(은행/보험) 종목일 수 있습니다.")
             else:
                 st.info("🇺🇸 미국 주식은 DART 재무제표 조회를 지원하지 않습니다.")
 
