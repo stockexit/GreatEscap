@@ -70,7 +70,7 @@ if df_sheet is not None:
     st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
     
     # 상단 요약 지표 (실시간 데이터)
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3 = st.columns(3) #
     c1.metric("실시간 현재가", f"${current_p:.2f}")
     c2.metric("사장님 목표가", f"${target_p:.2f}")
     c3.metric("목표 수익률", f"{gap_percent:.1f}%", delta=f"{gap_percent:.1f}%")
@@ -78,6 +78,17 @@ if df_sheet is not None:
     st.write("---")
 
     # 가로 2단 차트 배치
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2) #
     with col1:
-        draw_chart(s_info['코드'], "3mo", "📅
+        draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
+    with col2:
+        draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장")
+
+    st.write("---")
+
+    # 하단 분석 메모 (순정 스타일로 복구)
+    # '메메' 대신 '메모'를 정확하게 사용합니다.
+    st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
+
+else:
+    st.error("데이터 로딩 실패! 구글 시트 연결을 확인하세요.")
