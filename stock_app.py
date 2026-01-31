@@ -27,7 +27,7 @@ st.markdown("""
         visibility: visible !important;
     }
     
-    /* 사이드바 너비를 260px로 고정 */
+    /* 사이드바 너비 고정 */
     [data-testid="stSidebar"] { min-width: 260px; max-width: 260px; }
     </style>
     """, unsafe_allow_html=True)
@@ -39,7 +39,7 @@ def load_data():
         sheet_url = "https://docs.google.com/spreadsheets/d/1FHEblKL20VNpqdhnGu2FK7UY4ueMS3JSEwiZUEqDtaw/edit?usp=sharing"
         url = sheet_url.split("/edit")[0] + "/export?format=csv"
         df = pd.read_csv(url)
-        # 종목명이 적힌 데이터만 깨끗하게 필터링
+        # 종목명이 있는 데이터만 필터링
         return df.dropna(subset=['종목명'])
     except Exception as e:
         st.error(f"시트 로딩 에러: {e}")
@@ -95,7 +95,7 @@ if df_sheet is not None and not df_sheet.empty:
     # 메인 화면: 제목 및 차트
     st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
 
-    # 가로 2단 차트 배치 (PC 기준)
+    # 가로 2단 차트 배치
     col1, col2 = st.columns(2)
     with col1:
         draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
@@ -108,3 +108,7 @@ if df_sheet is not None and not df_sheet.empty:
     c_a, c_b = st.columns([1, 2])
     with c_a:
         st.metric("사장님 목표가", f"{s_info['적정가']}")
+    with c_b:
+        st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
+else:
+    st.error("데이터 로딩 실패! 구글 시트 설정을 확인해주세요.")
