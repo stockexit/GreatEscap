@@ -97,7 +97,7 @@ if df_sheet is not None:
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
-        # --- [변경] 투자 등급 설정 ---
+        # --- 투자 등급 설정 ---
         grade = s_info.get('투자등급', '미분류') 
         
         if grade == "코어":
@@ -109,9 +109,9 @@ if df_sheet is not None:
             badge_icon = "🛰️"
             badge_text = "SATELLITE"
         elif grade == "시가존":
-            badge_color = "#2E7D32"  # [수정] 초록색 (진한 녹색)
+            badge_color = "#2E7D32"  # 초록 (진한 녹색)
             badge_icon = "🚬"        # 담배 아이콘
-            badge_text = "시가존"     # 텍스트 깔끔하게
+            badge_text = "시가존"
         else:
             badge_color = "#616161"  # 회색
             badge_icon = "❔"
@@ -136,7 +136,8 @@ if df_sheet is not None:
             gap_min, gap_max = 0, 0
             st.error(f"데이터 오류: {e}")
 
-        st.title(f"🚀 {selected} ({ticker_code}) Analysis")
+        # [수정됨] 타이틀 텍스트 변경: Analysis -> 기업 가치
+        st.title(f"🚀 {selected} ({ticker_code}) 기업 가치")
         
         c1, c2, c3 = st.columns(3)
         
