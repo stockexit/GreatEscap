@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 
-# 1. 순정 화면 설정 (CSS 가리기 코드 완전 삭제)
+# 1. 순정 화면 설정 (가장 윗줄 고정)
 st.set_page_config(
     page_title="사장님 투자 터미널", 
     layout="wide"
@@ -24,9 +24,9 @@ def load_data(csv_url):
 
 df_sheet = load_data(url)
 
-# 3. 종목 선택 (사이드바 메뉴 부활)
+# 3. 종목 선택 (왼쪽 사이드바 메뉴 부활)
 if df_sheet is not None and not df_sheet.empty:
-    st.sidebar.title("🎯 분석 종목")
+    st.sidebar.title("🎯 분석 종목 리스트")
     stock_names = df_sheet['종목명'].unique().tolist()
     # 사이드바에서 종목을 선택하면 아래 화면이 즉시 바뀝니다
     selected = st.sidebar.selectbox("종목을 고르세요", stock_names)
@@ -36,7 +36,7 @@ else:
     st.error("구글 시트를 읽지 못했습니다. 공유 설정을 확인해주세요!")
     st.stop()
 
-# 4. 차트 그리기 함수 (SyntaxError 방지 완벽 검수)
+# 4. 차트 그리기 함수 (SyntaxError 방지 완벽 검수 완료)
 def draw_chart(ticker, period, title):
     try:
         # 3개월은 일간(1d), 5년은 주간(1wk) 데이터
@@ -56,7 +56,7 @@ def draw_chart(ticker, period, title):
         )])
 
         fig.update_layout(
-            title=title,
+            title=dict(text=title, font=dict(size=16)),
             height=500, # 순정 모드에서는 차트를 큼직하게 띄웁니다
             template="plotly_dark",
             xaxis_rangeslider_visible=False,
@@ -75,4 +75,8 @@ col1, col2 = st.columns(2)
 with col1:
     draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
 with col2:
-    draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장
+    draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장 (로그)")
+
+st.write("---")
+
+#
