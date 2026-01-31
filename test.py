@@ -3,10 +3,14 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 
-# 1. 화면 설정
-st.set_page_config(page_title="사장님 투자 터미널", layout="wide")
+# 1. 화면 설정 (메뉴가 처음부터 펼쳐지도록 'expanded' 설정)
+st.set_page_config(
+    page_title="사장님 투자 터미널", 
+    layout="wide",
+    initial_sidebar_state="expanded" 
+)
 
-# 2. 지저분한 UI 제거
+# 2. 로고 제거 및 깔끔한 디자인
 st.markdown("""
     <style>
     header {visibility: hidden;}
@@ -29,17 +33,29 @@ def load_data(csv_url):
 
 df_sheet = load_data(url)
 
-# 4. 종목 선택 (사이드바)
+# 4. 왼쪽 메뉴 (사이드바) 구성
 if df_sheet is not None and not df_sheet.empty:
-    st.sidebar.title("🎯 분석 종목 리스트")
+    # 사이드바 제목
+    st.sidebar.markdown("## 🎯 종목 리서치")
+    st.sidebar.write("---")
+    
+    # 시트의 종목명들을 가져와서 선택창을 만듭니다
     stock_names = df_sheet['종목명'].unique().tolist()
-    selected = st.sidebar.selectbox("종목을 고르세요", stock_names)
+    
+    # [핵심] 여기서 종목을 고르면 화면이 바뀝니다!
+    selected = st.sidebar.selectbox("보고 싶은 종목 선택 👇", stock_names)
+    
+    # 선택된 종목의 정보 추출
     s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
+    
+    st.sidebar.write("---")
+    st.sidebar.success(f"현재 선택: **{selected}**")
+    st.sidebar.info("💡 모바일은 왼쪽 상단 '>' 버튼을 누르면 이 메뉴가 나옵니다!")
 else:
-    st.error("구글 시트를 읽지 못했습니다. 공유 설정을 확인해주세요!")
+    st.error("데이터 로딩 실패")
     st.stop()
 
-# 5. 차트 그리기 함수 (에러 완벽 방지 검수)
+# 5. 차트 그리기 함수 (순정 버전)
 def draw_chart(ticker, period, title):
     try:
         interval = "1wk" if period == "5y" else "1d"
@@ -48,18 +64,13 @@ def draw_chart(ticker, period, title):
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
-        if df.empty:
-            return st.warning(f"⚠️ {title}: 데이터 없음")
-
         fig = go.Figure(data=[go.Candlestick(
             x=df.index, open=df['Open'], high=df['High'], 
             low=df['Low'], close=df['Close'], name=title
         )])
 
         fig.update_layout(
-            title=dict(text=title, font=dict(size=16)),
-            height=450, 
-            template="plotly_dark",
+            title=title, height=450, template="plotly_dark",
             xaxis_rangeslider_visible=False,
             margin=dict(l=10, r=10, b=10, t=50),
             yaxis_type="log" if period == "5y" else "linear"
@@ -71,18 +82,17 @@ def draw_chart(ticker, period, title):
 # 6. 메인 화면 구성
 st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
 
-# 차트 2개 집중 배치
 col1, col2 = st.columns(2)
 with col1:
     draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
 with col2:
-    draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장 (로그)")
+    draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장")
 
 st.write("---")
 
-# 7. 하단 리포트 (시트 내용 반영)
-c_a, c_b = st.columns([1, 2])
-with c_a:
+# 7. 하단 사장님 메모
+c1, c2 = st.columns([1, 2])
+with c1:
     st.metric("사장님 목표가", f"{s_info['적정가']}")
-with c_b:
+with c2:
     st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
