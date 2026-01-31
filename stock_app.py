@@ -52,5 +52,58 @@ def draw_chart(ticker, period, title):
 df_sheet = load_data()
 
 if df_sheet is not None:
-    # 사이드바 설정
-    st.sidebar.markdown("## 🎯
+    # 사이드바 설정 (image_d9a218 따옴표 오류 수정)
+    st.sidebar.markdown("## 🎯 분석 종목 리스트")
+    selected = st.sidebar.selectbox("종목 선택 👇", df_sheet['종목명'].unique())
+    s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
+    
+    # [뉴스 보안 수술] 데이터 안전하게 긁어오기
+    try:
+        # 실시간 환율 데이터
+        ex_rate = yf.Ticker("USDKRW=X").history(period="1d")['Close'].iloc[-1]
+        
+        # 주식 및 뉴스 데이터 추출
+        ticker_obj = yf.Ticker(s_info['코드'])
+        current_p = ticker_obj.history(period="1d")['Close'].iloc[-1]
+        target_p = float(s_info['적정가'])
+        gap_percent = ((target_p - current_p) / current_p) * 100
+        
+        # 뉴스 데이터 가져오기
+        news_data = ticker_obj.news
+    except:
+        ex_rate, current_p, target_p, gap_percent, news_data = 1400, 0, 0, 0, []
+
+    # 메인 화면 구성
+    st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
+    
+    # 상단 요약 지표 (image_da0ad4 SyntaxError 수술 완료)
+    c1, c2, c3 = st.columns(3)
+    c1.metric(f"현재가 (환율: {ex_rate:,.0f}원)", f"${current_p:,.2f}", f"{current_p * ex_rate:,.0f}원")
+    c2.metric("사장님 목표가", f"${target_p:,.2f}", f"{target_p * ex_rate:,.0f}원", delta_color="off")
+    c3.metric("목표 수익률", f"{gap_percent:.1f}%", f"{gap_percent:.1f}%")
+
+    st.write("---")
+
+    # 가로 2단 차트 배치
+    col1, col2 = st.columns(2)
+    with col1:
+        draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
+    with col2:
+        draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장")
+
+    st.write("---")
+
+    # 뉴스 표시부: 데이터 구조 대응 및 KeyError 방지
+    low_col1, low_col2 = st.columns([1, 1.5])
+    
+    with low_col1:
+        st.subheader("💡 분석 메모")
+        # '메메' 에러 영구 박멸
+        st.success(f"{s_info['메모']}") 
+        
+    with low_col2:
+        st.subheader("📰 실시간 최신 뉴스")
+        if news_data:
+            # 상위 5개 뉴스 표시
+            for news in news_data[:5]:
+                # 여러 키값
