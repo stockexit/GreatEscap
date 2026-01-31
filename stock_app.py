@@ -14,7 +14,7 @@ st.set_page_config(
 # 2. SSL 인증서 에러 방지 (로컬 실행 필수)
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# 3. 데이터 로딩 및 시장 자동 분류 (한국 우선)
+# 3. 데이터 로딩 및 시장 자동 분류
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -31,7 +31,7 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수 (아이콘 제거 & 숫자 크기 30으로 확대)
+# 4. 차트 그리기 함수 (아이콘 제거 & 숫자 크기 대폭 확대)
 def draw_chart(ticker, period, title, unit, target_p=None):
     try:
         # [해결] 3mo는 일봉(1d), 5y는 주봉(1wk)으로 설정해 기간 중복 방지
@@ -54,9 +54,9 @@ def draw_chart(ticker, period, title, unit, target_p=None):
             fig.add_hline(y=target_p, line_dash="dash", line_color="red")
             fig.add_annotation(
                 x=df.index[-1], y=target_p,
-                text=f"{unit}{target_p:,.0f}", # 아이콘 없이 숫자만!
+                text=f"{unit}{target_p:,.0f}", # 아이콘 없이 숫자만 깔끔하게!
                 showarrow=False, 
-                yshift=20, # 선보다 위로 더 띄움
+                yshift=25, # 선보다 위로 넉넉히 띄움
                 font=dict(color="white", size=32, family="Arial Black"), # 글자 크기 32로 대폭 확대
                 bgcolor="red", 
                 bordercolor="red", 
@@ -66,7 +66,8 @@ def draw_chart(ticker, period, title, unit, target_p=None):
         
         fig.update_layout(
             title=dict(text=f"{title} ({unit})", font=dict(size=18)),
-            height=450, template="plotly_dark",
+            height=500, # 차트 높이 상향
+            template="plotly_dark",
             xaxis_rangeslider_visible=False,
             margin=dict(l=10, r=10, b=10, t=50)
         )
@@ -88,44 +89,9 @@ if df_sheet is not None:
     st.sidebar.markdown(f"## 🎯 {market_choice} 종목")
     selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
     
-    # [수술] KeyError 및 괄호 누락 방지
+    # [수술] KeyError 및 괄호/따옴표 누락 방지
     s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
     
     ticker_code = s_info['코드'].upper()
     is_korea = market_choice == "한국(KRW)"
     unit = "₩" if is_korea else "$"
-    
-    try:
-        ticker_obj = yf.Ticker(ticker_code)
-        current_p = ticker_obj.history(period="1d")['Close'].iloc[-1]
-        target_p = float(s_info['적정가'])
-        gap_percent = ((target_p - current_p) / current_p) * 100
-    except:
-        current_p, target_p, gap_percent = 0, 0, 0
-
-    st.title(f"🚀 {selected} ({ticker_code})")
-    
-    # 상단 요약 지표 (f-string 에러 수술 완료)
-    c1, c2, c3 = st.columns(3)
-    p_fmt = ":,.0f" if is_korea else ":,.2f"
-    c1.metric("실시간 현재가", f"{unit}{current_p:{p_fmt}}")
-    c2.metric("사장님 목표가", f"{unit}{target_p:{p_fmt}}", delta_color="off")
-    c3.metric("목표까지 수익률", f"{gap_percent:.1f}%", f"{gap_percent:.1f}%")
-
-    st.write("---")
-
-    # 차트 배치 (5년 차트에만 대왕 숫자 표시)
-    col1, col2 = st.columns(2)
-    with col1:
-        # 3개월 차트는 캔들 흐름만 시원하게!
-        draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
-    with col2:
-        # 5년 차트는 큼직한 목표가 수치와 함께!
-        draw_chart(ticker_code, "5y", "🏛️ 5년 장기 성장", unit, target_p)
-
-    st.write("---")
-    # 하단 분석 메모 (KeyError 방지)
-    st.subheader("💡 분석 메모")
-    st.success(f"{s_info.get('메모', '메모 내용이 없습니다.')}") 
-else:
-    st.error("데이터 로딩 실패! 구글 시트 연결을 확인하세요.")
