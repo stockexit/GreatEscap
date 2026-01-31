@@ -19,7 +19,7 @@ st.set_page_config(
 # 2. SSL 에러 방지
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# 3. 데이터 로딩
+# 3. 데이터 로딩 (구글 시트)
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -32,7 +32,9 @@ def load_data():
     except:
         return None
 
-# 4. DART 데이터 수집 함수 (자동 날짜 + 에러 방지)
+# 4. [자동 로딩용] DART 데이터 수집 함수 (캐싱 적용 @st.cache_data)
+# 한 번 가져온 종목은 컴퓨터가 기억해서 로딩 없이 바로 띄워줍니다.
+@st.cache_data(show_spinner=False) 
 def fetch_dart_data(api_key, ticker_code, stock_name):
     try:
         dart = OpenDartReader(api_key)
@@ -40,7 +42,7 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
          return None, f"API 키 오류: {e}"
 
     if len(str(ticker_code)) != 6:
-        return None, f"DART는 6자리 숫자 코드만 조회 가능합니다. (현재: {ticker_code})"
+        return None, "DART는 6자리 숫자 코드만 가능"
 
     now_year = datetime.datetime.now().year 
     end_year = now_year
@@ -48,15 +50,9 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
     
     financial_list = []
     
-    progress_text = "DART 서버 접속 중..."
-    my_bar = st.sidebar.progress(0, text=progress_text) # 사이드바에 진행바 표시
-    total_years = end_year - start_year + 1
-
     try:
-        for idx, year in enumerate(range(start_year, end_year + 1)):
-            percent = int((idx / total_years) * 100)
-            my_bar.progress(percent, text=f"{year}년 데이터 수집... ({percent}%)")
-            
+        # 진행상황을 사이드바가 아닌 로그처럼 처리 (자동이라 방해 안 되게)
+        for year in range(start_year, end_year + 1):
             try:
                 df = dart.finstate(ticker_code, year, reprt_code='11011')
             except:
@@ -79,11 +75,8 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
                 target_df = df[cond_sales | cond_op | cond_net].copy()
                 financial_list.append(target_df)
             
-            time.sleep(0.3)
-
-        my_bar.progress(100, text="완료!")
-        time.sleep(0.5)
-        my_bar.empty()
+            # 자동 로딩이라 서버 부하 줄이기 위해 딜레이 최소화
+            time.sleep(0.1)
 
         if financial_list:
             df_final = pd.concat(financial_list)
@@ -100,14 +93,14 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
             df_pivot = df_clean.pivot_table(index='Year', columns='account_nm', values='thstrm_amount', aggfunc='sum')
             df_pivot = df_pivot / 100000000 # 억 단위
             df_pivot = df_pivot.round(0)
-            df_pivot = df_pivot.sort_index(ascending=True) # 과거 -> 최신 순
+            df_pivot = df_pivot.sort_index(ascending=True)
             
-            return df_pivot, "수집 성공! '📊 10년 재무제표' 탭을 확인하세요."
+            return df_pivot, "OK"
         else:
-            return None, "수집된 데이터가 없습니다."
+            return None, "데이터 없음"
 
     except Exception as e:
-        return None, f"에러 발생: {e}"
+        return None, f"에러: {e}"
 
 # 5. 차트 함수
 def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, target_buy=None, current_price=None):
@@ -171,24 +164,21 @@ if df_sheet is not None:
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
-        # --- DART 버튼 (사이드바) ---
+        # ---------------------------------------------------------
+        # [NEW] 재무 데이터 자동 로딩 로직 (버튼 삭제됨)
+        # ---------------------------------------------------------
+        dart_df = None
         if is_korea:
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("📊 재무 데이터 수집")
+            DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" # ⚠️ API 키 확인
             
-            # ⚠️ 본인 API 키 입력
-            DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
-            
-            if st.sidebar.button("최근 10년 재무제표 가져오기 (클릭)"):
-                with st.spinner('DART 접속 중...'):
-                    dart_df, msg = fetch_dart_data(DART_API_KEY, dart_code, selected)
-                    if dart_df is not None:
-                        st.sidebar.success("수집 완료!") # 메시지 간소화
-                        st.session_state['dart_data'] = dart_df
-                    else:
-                        st.sidebar.error(msg)
-        
-        # --- 지표 계산 ---
+            # 스피너만 보여주고 자동으로 가져옵니다.
+            # @st.cache_data 덕분에 두 번째부터는 스피너 없이 즉시 뜹니다.
+            with st.spinner(f"📊 {selected} 10년치 재무제표 가져오는 중... (최초 1회만 로딩)"):
+                dart_df, msg = fetch_dart_data(DART_API_KEY, dart_code, selected)
+
+        # ---------------------------------------------------------
+
+        # 지표 계산
         grade = s_info.get('투자등급', '미분류') 
         badge_color = {"코어": "#2962FF", "위성": "#FFAB00", "시가존": "#2E7D32"}.get(grade, "#616161")
         badge_icon = {"코어": "💎", "위성": "🛰️", "시가존": "🚬"}.get(grade, "❔")
@@ -213,12 +203,10 @@ if df_sheet is not None:
 
         st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
 
-        # ==========================================
-        # [NEW] 탭(Tab)으로 화면 분리 (여기가 핵심!)
-        # ==========================================
+        # 탭 구성
         tab1, tab2 = st.tabs(["🚀 종목 대시보드", "📊 10년 재무제표"])
 
-        # --- 탭 1: 기존 대시보드 (차트, 가격, 메모) ---
+        # --- 탭 1: 대시보드 ---
         with tab1:
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -251,26 +239,26 @@ if df_sheet is not None:
             else:
                 st.text("등록된 리포트 없음")
 
-        # --- 탭 2: 재무제표 (별도 공간) ---
+        # --- 탭 2: 재무제표 (자동 로딩됨) ---
         with tab2:
             st.markdown("### 📊 최근 10년 핵심 재무지표 (매출/영업이익/순이익)")
-            if 'dart_data' in st.session_state and is_korea:
-                st.markdown(f"**단위: 억원** (종목: {selected})")
-                st.dataframe(st.session_state['dart_data'], use_container_width=True, height=500)
-                
-                # CSV 다운로드 버튼
-                csv = st.session_state['dart_data'].to_csv().encode('utf-8-sig')
-                st.download_button(
-                    label="💾 엑셀(CSV)로 다운로드",
-                    data=csv,
-                    file_name=f"{selected}_10년재무제표.csv",
-                    mime='text/csv',
-                )
-            else:
-                if not is_korea:
-                    st.warning("미국 주식은 DART 재무제표를 조회할 수 없습니다.")
+            
+            if is_korea:
+                if dart_df is not None:
+                    st.markdown(f"**단위: 억원** (종목: {selected})")
+                    st.dataframe(dart_df, use_container_width=True, height=500)
+                    
+                    csv = dart_df.to_csv().encode('utf-8-sig')
+                    st.download_button(
+                        label="💾 엑셀(CSV)로 다운로드",
+                        data=csv,
+                        file_name=f"{selected}_10년재무제표.csv",
+                        mime='text/csv',
+                    )
                 else:
-                    st.info("👈 왼쪽 사이드바에서 **[최근 10년 재무제표 가져오기]** 버튼을 눌러주세요.")
+                    st.warning(f"데이터를 가져오지 못했습니다. (메시지: {msg if 'msg' in locals() else '데이터 없음'})")
+            else:
+                st.info("🇺🇸 미국 주식은 DART 재무제표 조회를 지원하지 않습니다.")
 
     else:
         st.warning("종목 없음")
