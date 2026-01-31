@@ -4,14 +4,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import ssl
 
-# 1. 화면 설정 (메뉴 상시 오픈)
+# 1. 화면 설정 (메뉴 상시 오픈 및 넓은 레이아웃)
 st.set_page_config(
     page_title="사장님 투자 터미널", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
 
-# 2. SSL 인증서 에러 방지 (image_da8e7c 에러 해결용)
+# 2. SSL 인증서 에러 방지 (로컬 실행 시 필수 설정)
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # 3. 데이터 로딩 (구글 시트 연동)
@@ -25,7 +25,7 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수 (SyntaxError 완벽 차단)
+# 4. 차트 그리기 함수 (SyntaxError 박멸 버전)
 def draw_chart(ticker, period, title):
     try:
         interval = "1wk" if period == "5y" else "1d"
@@ -52,26 +52,28 @@ def draw_chart(ticker, period, title):
 df_sheet = load_data()
 
 if df_sheet is not None:
+    # 사이드바 설정
     st.sidebar.markdown("## 🎯 분석 종목 리스트")
     selected = st.sidebar.selectbox("종목 선택 👇", df_sheet['종목명'].unique())
     s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
     
     # [뉴스 보안 수술] 데이터 안전하게 긁어오기
     try:
-        # 환율 데이터
+        # 실시간 환율 데이터
         ex_rate = yf.Ticker("USDKRW=X").history(period="1d")['Close'].iloc[-1]
         
-        # 주식 및 뉴스 데이터
+        # 주식 및 뉴스 데이터 추출
         ticker_obj = yf.Ticker(s_info['코드'])
         current_p = ticker_obj.history(period="1d")['Close'].iloc[-1]
         target_p = float(s_info['적정가'])
         gap_percent = ((target_p - current_p) / current_p) * 100
         
-        # 뉴스 데이터를 가장 넓은 범위로 긁어옵니다
+        # 뉴스 데이터 가져오기
         news_data = ticker_obj.news
     except:
         ex_rate, current_p, target_p, gap_percent, news_data = 1400, 0, 0, 0, []
 
+    # 메인 화면 구성
     st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
     
     # 상단 요약 지표 (SyntaxError 수술 완료)
@@ -91,7 +93,7 @@ if df_sheet is not None:
 
     st.write("---")
 
-    # [수정] 뉴스 표시부: 데이터가 없을 때의 'No Title' 현상을 방지합니다
+    # [수정] 뉴스 표시부: 데이터 구조 대응 및 KeyError 방지
     low_col1, low_col2 = st.columns([1, 1.5])
     
     with low_col1:
@@ -102,17 +104,9 @@ if df_sheet is not None:
     with low_col2:
         st.subheader("📰 실시간 최신 뉴스")
         if news_data:
-            # 뉴스 내용을 최대 5개까지 안전하게 순회
+            # 상위 5개 뉴스만 표시
             for news in news_data[:5]:
-                # .get()을 사용해 데이터가 없어도 '정보 없음'으로 표시하여 KeyError 방지
-                title = news.get('title') or news.get('headline') or "뉴스 제목을 불러올 수 없음"
+                # 여러 키값(title, headline 등)을 모두 확인하여 뉴스 제목 확보
+                title = news.get('title') or news.get('headline') or "뉴스 제목 없음"
                 link = news.get('link') or news.get('url') or "#"
-                publisher = news.get('publisher') or news.get('source') or "정보처 미상"
-                
-                st.markdown(f"**[{publisher}]** [{title}]({link})")
-        else:
-            st.info("현재 이 종목에 대한 실시간 뉴스가 없습니다.")
-
-else:
-    # 시트 로딩 에러 시 출력
-    st.error("데이터 로딩 실패! 구글 시트 설정을 확인해주세요.")
+                publisher = news.get('publisher') or news.
