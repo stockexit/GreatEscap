@@ -7,7 +7,7 @@ import ssl
 import OpenDartReader
 import time
 import re 
-import datetime # [필수] 날짜 자동 계산을 위해 추가됨
+import datetime
 
 # 1. 화면 설정
 st.set_page_config(
@@ -32,7 +32,7 @@ def load_data():
     except:
         return None
 
-# 4. [자동 날짜 적용] DART 데이터 수집 함수
+# 4. DART 데이터 수집 함수 (자동 날짜 + 에러 방지)
 def fetch_dart_data(api_key, ticker_code, stock_name):
     try:
         dart = OpenDartReader(api_key)
@@ -42,28 +42,22 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
     if len(str(ticker_code)) != 6:
         return None, f"DART는 6자리 숫자 코드만 조회 가능합니다. (현재: {ticker_code})"
 
-    # -----------------------------------------------------------
-    # [NEW] 올해 연도를 자동으로 구해서 10년 전까지 설정
-    # -----------------------------------------------------------
-    now_year = datetime.datetime.now().year # 현재 연도 (예: 2026)
+    now_year = datetime.datetime.now().year 
     end_year = now_year
     start_year = now_year - 10
     
     financial_list = []
     
     progress_text = "DART 서버 접속 중..."
-    my_bar = st.progress(0, text=progress_text)
-    
-    # 범위: 시작년도 ~ 올해까지
+    my_bar = st.sidebar.progress(0, text=progress_text) # 사이드바에 진행바 표시
     total_years = end_year - start_year + 1
 
     try:
         for idx, year in enumerate(range(start_year, end_year + 1)):
             percent = int((idx / total_years) * 100)
-            my_bar.progress(percent, text=f"{year}년도 데이터 수집 중... ({percent}%)")
+            my_bar.progress(percent, text=f"{year}년 데이터 수집... ({percent}%)")
             
             try:
-                # 11011: 사업보고서 (연간 확정 실적)
                 df = dart.finstate(ticker_code, year, reprt_code='11011')
             except:
                 df = None
@@ -71,7 +65,6 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
             if df is not None:
                 if 'account_nm' not in df.columns: continue 
 
-                # 연결/별도 구분
                 if 'fs_div' in df.columns:
                     if 'CFS' in df['fs_div'].values:
                         df = df[df['fs_div'] == 'CFS']
@@ -79,7 +72,6 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
                         df = df[df['fs_div'] == 'OFS']
                 
                 df['Year'] = year
-                
                 cond_sales = df['account_nm'].str.contains('매출액|영업수익') & ~df['account_nm'].str.contains('원가')
                 cond_op = df['account_nm'].str.contains('영업이익')
                 cond_net = df['account_nm'].str.contains('당기순이익') & ~df['account_nm'].str.contains('포괄|지배|비지배')
@@ -89,14 +81,13 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
             
             time.sleep(0.3)
 
-        my_bar.progress(100, text="정리 중...")
+        my_bar.progress(100, text="완료!")
         time.sleep(0.5)
         my_bar.empty()
 
         if financial_list:
             df_final = pd.concat(financial_list)
             
-            # 숫자 변환
             def clean_number(x):
                 try:
                     return float(str(x).replace(',', ''))
@@ -109,17 +100,11 @@ def fetch_dart_data(api_key, ticker_code, stock_name):
             df_pivot = df_clean.pivot_table(index='Year', columns='account_nm', values='thstrm_amount', aggfunc='sum')
             df_pivot = df_pivot / 100000000 # 억 단위
             df_pivot = df_pivot.round(0)
+            df_pivot = df_pivot.sort_index(ascending=True) # 과거 -> 최신 순
             
-            # 연도 기준으로 내림차순 정렬 (최신이 위로 오게 하려면 ascending=False)
-            # 여기서는 차트처럼 보기 편하게 오름차순(옛날->최신) 유지
-            df_pivot = df_pivot.sort_index(ascending=True)
-            
-            file_name = f"{stock_name}({ticker_code})_재무제표.csv"
-            df_pivot.to_csv(file_name, encoding="utf-8-sig")
-            
-            return df_pivot, f"성공! '{file_name}' 저장 완료"
+            return df_pivot, "수집 성공! '📊 10년 재무제표' 탭을 확인하세요."
         else:
-            return None, "수집된 데이터가 없거나, 아직 사업보고서가 나오지 않았습니다."
+            return None, "수집된 데이터가 없습니다."
 
     except Exception as e:
         return None, f"에러 발생: {e}"
@@ -129,7 +114,7 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None, ta
     try:
         interval = "1d" if period == "3mo" else "1wk"
         df = yf.download(ticker, period=period, interval=interval)
-        if df.empty: return st.write(f"{title} 데이터 없음 (티커 확인 필요)")
+        if df.empty: return st.write(f"{title} 데이터 없음")
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         
         fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name=title)])
@@ -173,17 +158,11 @@ if df_sheet is not None:
         selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
         s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
         
-        # 티커 정제
         raw_code = str(s_info['코드']).strip().upper()
-        
         if market_choice == "한국(KRW)":
             dart_code = "".join(re.findall(r'\d+', raw_code))
             if len(dart_code) < 6: dart_code = dart_code.zfill(6)
-            
-            if raw_code.endswith(".KQ"):
-                yf_code = dart_code + ".KQ"
-            else:
-                yf_code = dart_code + ".KS"
+            yf_code = dart_code + ".KQ" if raw_code.endswith(".KQ") else dart_code + ".KS"
         else:
             dart_code = raw_code
             yf_code = raw_code
@@ -192,20 +171,19 @@ if df_sheet is not None:
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
-        # --- DART 버튼 ---
+        # --- DART 버튼 (사이드바) ---
         if is_korea:
             st.sidebar.markdown("---")
             st.sidebar.subheader("📊 재무 데이터 수집")
             
-            # ⚠️ 본인 API 키 입력 필수
+            # ⚠️ 본인 API 키 입력
             DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
             
             if st.sidebar.button("최근 10년 재무제표 가져오기 (클릭)"):
                 with st.spinner('DART 접속 중...'):
                     dart_df, msg = fetch_dart_data(DART_API_KEY, dart_code, selected)
-                    
                     if dart_df is not None:
-                        st.sidebar.success(msg)
+                        st.sidebar.success("수집 완료!") # 메시지 간소화
                         st.session_state['dart_data'] = dart_df
                     else:
                         st.sidebar.error(msg)
@@ -228,52 +206,72 @@ if df_sheet is not None:
             gap_min = ((t_min - current_p)/current_p)*100 if current_p else 0
             gap_max = ((t_max - current_p)/current_p)*100 if current_p else 0
             gap_buy = ((t_buy - current_p)/current_p)*100 if current_p else 0
-            
             cagr_min = ((t_min/current_p)**(1/7)-1)*100 if current_p and t_min else 0
             cagr_max = ((t_max/current_p)**(1/7)-1)*100 if current_p and t_max else 0
         except:
             current_p = 0; gap_min=gap_max=gap_buy=cagr_min=cagr_max=0
 
         st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
-        
-        if 'dart_data' in st.session_state and is_korea:
-            st.markdown("### 📊 최근 10년 핵심 재무지표 (단위: 억원)")
-            st.dataframe(st.session_state['dart_data'], use_container_width=True)
-            if st.button("표 닫기"):
-                del st.session_state['dart_data']
-                st.rerun()
+
+        # ==========================================
+        # [NEW] 탭(Tab)으로 화면 분리 (여기가 핵심!)
+        # ==========================================
+        tab1, tab2 = st.tabs(["🚀 종목 대시보드", "📊 10년 재무제표"])
+
+        # --- 탭 1: 기존 대시보드 (차트, 가격, 메모) ---
+        with tab1:
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
+                st.markdown(f"""<div style="background-color: {badge_color}; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold;">{badge_icon} {badge_text}</div>""", unsafe_allow_html=True)
+            with c2: st.metric("⚡ 매수 가치", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
+            with c3: 
+                st.metric("🛡️ 보수적 적정가", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
+                if cagr_min: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_min:+.1f}%</div>", unsafe_allow_html=True)
+            with c4: 
+                st.metric("🚀 최대 미래가치", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
+                if cagr_max: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_max:+.1f}%</div>", unsafe_allow_html=True)
+
             st.write("---")
+            col1, col2 = st.columns(2)
+            with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
+            with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, t_min, t_max, t_buy)
 
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
-            st.markdown(f"""<div style="background-color: {badge_color}; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold;">{badge_icon} {badge_text}</div>""", unsafe_allow_html=True)
-        with c2: st.metric("⚡ 매수 가치", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
-        with c3: 
-            st.metric("🛡️ 보수적 적정가", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
-            if cagr_min: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_min:+.1f}%</div>", unsafe_allow_html=True)
-        with c4: 
-            st.metric("🚀 최대 미래가치", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
-            if cagr_max: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:3px;border-radius:3px;font-size:0.8em'>📈 7~10년 CAGR {cagr_max:+.1f}%</div>", unsafe_allow_html=True)
+            st.write("---")
+            st.subheader("📌 핵심 요약 (메모)")
+            st.info(s_info.get('메모', '메모 없음'))
+            
+            st.subheader("💡 심층 리포트")
+            note = s_info.get('노트링크', '')
+            if note and "docs.google.com" in str(note):
+                components.iframe(note.replace("/edit", "/preview"), height=800, scrolling=True)
+            elif s_info.get('이미지URL'):
+                st.image(s_info.get('이미지URL'), use_container_width=True)
+                if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
+            else:
+                st.text("등록된 리포트 없음")
 
-        st.write("---")
-        col1, col2 = st.columns(2)
-        with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
-        with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, t_min, t_max, t_buy)
+        # --- 탭 2: 재무제표 (별도 공간) ---
+        with tab2:
+            st.markdown("### 📊 최근 10년 핵심 재무지표 (매출/영업이익/순이익)")
+            if 'dart_data' in st.session_state and is_korea:
+                st.markdown(f"**단위: 억원** (종목: {selected})")
+                st.dataframe(st.session_state['dart_data'], use_container_width=True, height=500)
+                
+                # CSV 다운로드 버튼
+                csv = st.session_state['dart_data'].to_csv().encode('utf-8-sig')
+                st.download_button(
+                    label="💾 엑셀(CSV)로 다운로드",
+                    data=csv,
+                    file_name=f"{selected}_10년재무제표.csv",
+                    mime='text/csv',
+                )
+            else:
+                if not is_korea:
+                    st.warning("미국 주식은 DART 재무제표를 조회할 수 없습니다.")
+                else:
+                    st.info("👈 왼쪽 사이드바에서 **[최근 10년 재무제표 가져오기]** 버튼을 눌러주세요.")
 
-        st.write("---")
-        st.subheader("📌 핵심 요약 (메모)")
-        st.info(s_info.get('메모', '메모 없음'))
-        
-        st.subheader("💡 심층 리포트")
-        note = s_info.get('노트링크', '')
-        if note and "docs.google.com" in str(note):
-            components.iframe(note.replace("/edit", "/preview"), height=800, scrolling=True)
-        elif s_info.get('이미지URL'):
-            st.image(s_info.get('이미지URL'), use_container_width=True)
-            if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
-        else:
-            st.text("등록된 리포트 없음")
     else:
         st.warning("종목 없음")
 else:
