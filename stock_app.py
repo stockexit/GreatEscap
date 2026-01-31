@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import ssl
 
-# 1. 화면 설정 (반드시 최상단 배치, 한국 시장 우선)
+# 1. 화면 설정 (반드시 코드 최상단에 위치)
 st.set_page_config(
     page_title="사장님 투자 터미널", 
     layout="wide",
@@ -23,7 +23,7 @@ def load_data():
         df = pd.read_csv(url)
         df = df.dropna(subset=['종목명'])
         
-        # .KS나 .KQ로 끝나면 한국, 아니면 미국으로 자동 분류
+        # 한국/미국 시장 자동 분류 로직
         df['Market'] = df['코드'].apply(
             lambda x: "한국(KRW)" if str(x).upper().endswith(('.KS', '.KQ')) else "미국(USD)"
         )
@@ -31,15 +31,15 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수 (아이콘 제거 & 대왕 숫자 강조)
+# 4. 차트 그리기 함수 (아이콘 제거 & 숫자 크기 대폭 확대)
 def draw_chart(ticker, period, title, unit, target_p=None):
     try:
-        # [해결] 3개월은 일봉(1d), 5년은 주봉(1wk)으로 설정해 기간 중복 방지
+        # [해결] 3개월은 일봉(1d), 5년은 주봉(1wk)으로 설정해 차트 중복 방지
         interval = "1d" if period == "3mo" else "1wk"
         df = yf.download(ticker, period=period, interval=interval)
         
         if df.empty:
-            return st.write(f"{title} 데이터를 불러올 수 없습니다.")
+            return st.write(f"{title} 데이터가 없습니다.")
             
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
@@ -49,4 +49,4 @@ def draw_chart(ticker, period, title, unit, target_p=None):
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # [복구] 5년 차트에만 빨간 점선 + 큼
+        # [핵심] 5년 차트에만 목표가 숫자 대왕 크기로 표시 [cite: image_
