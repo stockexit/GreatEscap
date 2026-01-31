@@ -184,7 +184,7 @@ if df_sheet is not None:
         # --- [NEW] 구글 문서 임베딩 & 메모 섹션 ---
         st.subheader("💡 투자 포인트 & 심층 리포트")
         
-        note_link = s_info.get('노트링크', None)
+        note_link = s_info.get('노트링크', https://docs.google.com/document/d/12dLb0tIARzGsr551zqdRL7nunlJfhvsuV9B553gxFJw/edit?usp=sharing)
         memo_content = s_info.get('메모', '작성된 메모가 없습니다.')
         if pd.isna(memo_content):
             memo_content = "작성된 메모가 없습니다."
