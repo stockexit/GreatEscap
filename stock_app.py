@@ -23,7 +23,6 @@ def load_data():
         df = pd.read_csv(url)
         df = df.dropna(subset=['종목명'])
         
-        # 한국/미국 자동 분류
         df['Market'] = df['코드'].apply(
             lambda x: "한국(KRW)" if str(x).upper().endswith(('.KS', '.KQ')) else "미국(USD)"
         )
@@ -48,7 +47,6 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
             low=df['Low'], close=df['Close'], name=title
         )])
         
-        # 보수적 적정가
         if target_min and target_min > 0:
             fig.add_hline(y=target_min, line_dash="dot", line_color="#00C853", opacity=0.8)
             fig.add_annotation(
@@ -57,7 +55,6 @@ def draw_chart(ticker, period, title, unit, target_min=None, target_max=None):
                 bgcolor="#00C853", bordercolor="white", borderwidth=1, opacity=0.9
             )
 
-        # 최대 미래가치
         if target_max and target_max > 0:
             fig.add_hline(y=target_max, line_dash="dash", line_color="#FF3D00", opacity=0.8)
             fig.add_annotation(
@@ -100,36 +97,30 @@ if df_sheet is not None:
         unit = "₩" if is_korea else "$"
         p_format = "{:,.0f}" if is_korea else "{:,.2f}"
         
-        # --- [변경] 투자 등급(신호등) 데이터 가져오기 ---
-        # 구글 시트에 '투자등급' 컬럼이 없으면 '미분류'로 처리
+        # --- [변경] 투자 등급 설정 ---
         grade = s_info.get('투자등급', '미분류') 
         
-        # 등급별 색상 및 아이콘 설정
         if grade == "코어":
-            badge_color = "#2962FF"  # 진한 파랑 (신뢰/무게감)
+            badge_color = "#2962FF"
             badge_icon = "💎"
-            badge_text = "CORE (주력)"
+            badge_text = "CORE"
         elif grade == "위성":
-            badge_color = "#FFAB00"  # 앰버/노랑 (민첩함)
+            badge_color = "#FFAB00"
             badge_icon = "🛰️"
-            badge_text = "SATELLITE (위성)"
+            badge_text = "SATELLITE"
         elif grade == "시가존":
-            badge_color = "#D50000"  # 빨강 (적극적 트레이딩)
-            badge_icon = "🔥"
-            badge_text = "MARKET ZONE (단기)"
+            badge_color = "#D50000"
+            badge_icon = "🚬"        # 담배 아이콘 적용
+            badge_text = "시가존"     # 깔끔하게 이름만 표시
         else:
-            badge_color = "#616161"  # 회색
+            badge_color = "#616161"
             badge_icon = "❔"
-            badge_text = "등급 미지정"
+            badge_text = "미지정"
 
-        # 현재가 로딩
         try:
             ticker_obj = yf.Ticker(ticker_code)
             history = ticker_obj.history(period="1d")
-            if not history.empty:
-                current_p = history['Close'].iloc[-1]
-            else:
-                current_p = 0
+            current_p = history['Close'].iloc[-1] if not history.empty else 0
 
             t_min = float(s_info.get('보수적적정가', 0))
             t_max = float(s_info.get('최대미래가치', 0)) 
@@ -145,15 +136,13 @@ if df_sheet is not None:
             gap_min, gap_max = 0, 0
             st.error(f"데이터 오류: {e}")
 
-        # 메인 타이틀
         st.title(f"🚀 {selected} ({ticker_code}) Analysis")
         
-        # --- [변경] 3단 지표 + 신호등 표시 ---
         c1, c2, c3 = st.columns(3)
         
         with c1:
             st.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
-            # HTML/CSS를 사용하여 신호등(배지) 만들기
+            # 배지 표시
             st.markdown(f"""
                 <div style="
                     background-color: {badge_color};
@@ -178,7 +167,6 @@ if df_sheet is not None:
 
         st.write("---")
 
-        # 차트 영역
         col1, col2 = st.columns(2)
         with col1:
             draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
@@ -187,7 +175,6 @@ if df_sheet is not None:
 
         st.write("---")
         
-        # 메모 영역
         st.subheader("💡 투자 포인트 및 메모")
         memo_content = s_info.get('메모', '작성된 메모가 없습니다.')
         if pd.isna(memo_content):
