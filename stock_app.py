@@ -103,7 +103,7 @@ if df_sheet is not None:
     st.sidebar.markdown(f"## 🎯 {market_choice} 종목")
     
     if not filtered_df.empty:
-        selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
+        selected = st.sidebar.selectbox("기업 선택 👇", filtered_df['종목명'].unique())
         s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
         
         ticker_code = s_info['코드'].upper()
@@ -153,7 +153,7 @@ if df_sheet is not None:
             gap_min, gap_max, gap_buy = 0, 0, 0
             st.error(f"데이터 오류: {e}")
 
-        st.title(f"🚀 {selected} ({ticker_code}) 기업 가치")
+        st.title(f"{selected} ({ticker_code}) 기업 가치")
         
         c1, c2, c3, c4 = st.columns(4)
         
