@@ -3,11 +3,12 @@ import streamlit.components.v1 as components
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from plotly.subplots import make_subplots # 이중축 차트를 위해 필요
 import ssl
 import OpenDartReader
 import time
 import datetime
+import re
 
 # 1. 화면 설정
 st.set_page_config(
@@ -41,7 +42,7 @@ def load_data():
         return None
 
 # ---------------------------------------------------------
-# [핵심 로직] 매출/영업이익/순이익 3대장 (10개 꽉 채우기)
+# [핵심 로직 수정] 순이익 -> EPS(주당순이익) 변경
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False) 
 def fetch_core_financials(api_key, ticker_code):
@@ -53,20 +54,18 @@ def fetch_core_financials(api_key, ticker_code):
     if len(str(ticker_code)) != 6:
         return None, None, "DART 조회 불가"
 
-    # [수정] 10개를 채우기 위해 넉넉하게 15년치를 뒤집니다. (최신 데이터가 없을 경우 대비)
     now_year = datetime.datetime.now().year 
-    years = range(now_year, now_year - 15, -1) # 역순으로 탐색 (최신 -> 과거)
+    years = range(now_year, now_year - 15, -1) 
     
     result_data = []
     status_text = st.empty()
     
     try:
         for year in years:
-            # 10개가 다 차면 그만 찾음
             if len(result_data) >= 10:
                 break
                 
-            status_text.text(f"🔍 {year}년 핵심 실적(매출/영업/순익) 찾는 중...")
+            status_text.text(f"🔍 {year}년 핵심 실적(매출/영업/EPS) 찾는 중...")
             df = None
             try:
                 # 11011: 사업보고서 (연간)
@@ -76,23 +75,22 @@ def fetch_core_financials(api_key, ticker_code):
 
             if df is not None and not df.empty and 'account_nm' in df.columns:
                 
-                # 공백 제거
                 df['account_clean'] = df['account_nm'].astype(str).str.replace(' ', '')
 
-                # --- 1. 매출액 찾기 ---
-                # 매출액, 영업수익, 수익(매출액) 등
+                # --- 1. 매출액 ---
                 mask_sales = df['account_clean'].str.contains('매출액|영업수익') & \
                              ~df['account_clean'].str.contains('원가') & \
                              ~df['account_clean'].str.contains('총이익')
 
-                # --- 2. 영업이익 찾기 ---
+                # --- 2. 영업이익 ---
                 mask_op = df['account_clean'].str.contains('영업이익') & \
-                          ~df['account_clean'].str.contains('기타') # 기타영업이익 제외
+                          ~df['account_clean'].str.contains('기타')
 
-                # --- 3. 당기순이익 찾기 ---
-                mask_net = df['account_clean'].str.contains('당기순이익') & \
-                           ~df['account_clean'].str.contains('포괄') & \
-                           ~df['account_clean'].str.contains('비지배')
+                # --- 3. EPS (주당순이익) [수정됨] ---
+                # '기본주당이익', '주당순이익' 등을 찾고 '희석'은 제외
+                mask_eps = df['account_clean'].str.contains('주당이익|주당순이익') & \
+                           ~df['account_clean'].str.contains('희석') & \
+                           ~df['account_clean'].str.contains('중단')
 
                 # 연결(CFS) 우선
                 target_df = df[df['fs_div'] == 'CFS']
@@ -102,18 +100,17 @@ def fetch_core_financials(api_key, ticker_code):
                 if not target_df.empty:
                     sales = 0
                     op_income = 0
-                    net_income = 0
+                    eps = 0
                     
-                    # 값 추출 함수
                     def get_value(mask):
                         rows = target_df[mask]
                         if not rows.empty:
-                            # 지배주주 순이익 같은 디테일한 항목이 있으면 그걸 우선
-                            if '당기순이익' in str(mask):
-                                row_controlling = rows[rows['account_clean'].str.contains('지배')]
-                                if not row_controlling.empty:
-                                    rows = row_controlling
-                            
+                            # EPS의 경우 보통 '기본주당이익'이 정확함
+                            if '주당' in str(mask):
+                                row_basic = rows[rows['account_clean'].str.contains('기본')]
+                                if not row_basic.empty:
+                                    rows = row_basic
+
                             val_str = str(rows.iloc[0]['thstrm_amount']).replace(',', '')
                             try: return float(val_str)
                             except: return 0
@@ -121,15 +118,15 @@ def fetch_core_financials(api_key, ticker_code):
 
                     sales = get_value(mask_sales)
                     op_income = get_value(mask_op)
-                    net_income = get_value(mask_net)
+                    eps = get_value(mask_eps) # EPS 추출
 
                     # 셋 중 하나라도 있으면 유효한 데이터로 인정
-                    if sales != 0 or op_income != 0 or net_income != 0:
+                    if sales != 0 or op_income != 0 or eps != 0:
                         result_data.append({
                             '연도': str(year),
                             '매출액': sales,
                             '영업이익': op_income,
-                            '당기순이익': net_income
+                            'EPS': eps  # 순이익 대신 EPS 저장
                         })
             
             time.sleep(0.1)
@@ -137,21 +134,19 @@ def fetch_core_financials(api_key, ticker_code):
         status_text.empty()
 
         if result_data:
-            # 연도 내림차순 정렬 (최신 -> 과거)
             result_data.sort(key=lambda x: x['연도'], reverse=True)
             
             df_final = pd.DataFrame(result_data)
             
-            # 단위 가공 (억원)
+            # 단위 가공 (매출/영업은 억, EPS는 원)
             df_final['매출액(억)'] = (df_final['매출액'] / 100000000).round(0)
             df_final['영업이익(억)'] = (df_final['영업이익'] / 100000000).round(0)
-            df_final['당기순이익(억)'] = (df_final['당기순이익'] / 100000000).round(0)
+            df_final['EPS(원)'] = df_final['EPS'].round(0) # EPS는 원 단위 그대로
 
             # 표 포맷팅
-            view_cols = ['연도', '매출액(억)', '영업이익(억)', '당기순이익(억)']
+            view_cols = ['연도', '매출액(억)', '영업이익(억)', 'EPS(원)']
             df_view = df_final[view_cols].set_index('연도').T
             
-            # 10개 잘라서 보여주기 (혹시 모르니)
             cols = df_view.columns[:10]
             df_view = df_view[cols]
             
@@ -163,7 +158,7 @@ def fetch_core_financials(api_key, ticker_code):
         status_text.empty()
         return None, None, f"오류: {e}"
 
-# 4. 차트 함수
+# 4. 차트 함수 (기존 유지)
 def draw_chart(ticker, period, title, unit, current_price=None, target_min=None, target_max=None, target_buy=None):
     try:
         interval = "1d" if period == "3mo" else "1wk"
@@ -173,12 +168,10 @@ def draw_chart(ticker, period, title, unit, current_price=None, target_min=None,
         
         fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name=title)])
         
-        # 현재가
         if current_price and current_price > 0:
             fig.add_hline(y=current_price, line_dash="dot", line_color="#FF4081", line_width=1)
             fig.add_annotation(xref="paper", x=0.5, y=current_price, text=f"<b>현재가 {unit}{current_price:,.0f}</b>", showarrow=False, xanchor="center", yshift=10, font=dict(color="white", size=14), bgcolor="#FF4081", bordercolor="white", borderwidth=1, opacity=0.9)
 
-        # 타겟 가격
         if target_buy and target_buy > 0:
             fig.add_hline(y=target_buy, line_width=2, line_color="#FFFFFF", opacity=1.0)
             fig.add_annotation(xref="paper", x=0.5, y=target_buy, text=f"<b>⚡ 매수 {unit}{target_buy:,.0f}</b>", showarrow=False, yshift=0, xanchor="center", font=dict(color="black", size=14), bgcolor="#FFFFFF", bordercolor="gray", borderwidth=1, opacity=0.9)
@@ -257,7 +250,7 @@ if df_sheet is not None:
 
         st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
 
-        tab1, tab2 = st.tabs(["🚀 종목 대시보드", "💎 가치분석 (매출/영업/순익)"])
+        tab1, tab2 = st.tabs(["🚀 종목 대시보드", "💎 가치분석 (매출/영업/EPS)"])
 
         # --- 탭 1 ---
         with tab1:
@@ -289,9 +282,9 @@ if df_sheet is not None:
                 st.image(s_info.get('이미지URL'), use_container_width=True)
                 if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
 
-        # --- 탭 2: 가치분석 (매출/영업/순익) ---
+        # --- 탭 2: 가치분석 (매출/영업/EPS) ---
         with tab2:
-            st.subheader(f"📊 {selected} 최근 10년 핵심 실적 (매출/영업/순익)")
+            st.subheader(f"📊 {selected} 최근 10년 핵심 실적 (매출/영업/EPS)")
             
             if not is_korea:
                 st.info("미국 주식은 지원하지 않습니다.")
@@ -305,21 +298,51 @@ if df_sheet is not None:
                     # 표 출력
                     st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
                     
-                    # 차트 출력 (그룹 바 차트)
+                    # ----------------------------------------------------------------
+                    # [차트 수정] 이중축 (Dual Axis) 차트 적용
+                    # 왼쪽 축: 매출/영업이익 (Bar)
+                    # 오른쪽 축: EPS (Line)
+                    # ----------------------------------------------------------------
                     raw_data = raw_data.sort_values('연도')
-                    fig = go.Figure()
                     
-                    fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['매출액(억)'], name='매출액', marker_color='#90CAF9'))
-                    fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['영업이익(억)'], name='영업이익', marker_color='#2962FF'))
-                    fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['당기순이익(억)'], name='당기순이익', marker_color='#00C853'))
+                    # 1. 이중축 설정 (secondary_y=True)
+                    fig = make_subplots(specs=[[{"secondary_y": True}]])
                     
+                    # 2. 막대 그래프 (왼쪽 축 - 매출/영업이익)
+                    fig.add_trace(go.Bar(
+                        x=raw_data['연도'], y=raw_data['매출액(억)'], 
+                        name='매출액(좌측)', marker_color='#90CAF9', opacity=0.7
+                    ), secondary_y=False)
+                    
+                    fig.add_trace(go.Bar(
+                        x=raw_data['연도'], y=raw_data['영업이익(억)'], 
+                        name='영업이익(좌측)', marker_color='#2962FF'
+                    ), secondary_y=False)
+
+                    # 3. 선 그래프 (오른쪽 축 - EPS)
+                    fig.add_trace(go.Scatter(
+                        x=raw_data['연도'], y=raw_data['EPS(원)'], 
+                        name='EPS(우측)', mode='lines+markers+text',
+                        line=dict(color='#00E676', width=3),
+                        marker=dict(size=8, color='#00E676'),
+                        text=raw_data['EPS(원)'].apply(lambda x: f"{x:,.0f}"),
+                        textposition="top center",
+                        textfont=dict(color="white")
+                    ), secondary_y=True)
+                    
+                    # 4. 레이아웃 다듬기
                     fig.update_layout(
-                        title="연도별 실적 성장 추이 (단위: 억원)", 
+                        title=f"{selected} 실적 성장 추이 (Bar: 억 원 / Line: 원)", 
                         template="plotly_dark", 
                         barmode='group', 
-                        height=500,
+                        height=550,
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                     )
+                    
+                    # 축 제목 설정
+                    fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
+                    fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False) # 오른쪽 그리드는 끔
+                    
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
