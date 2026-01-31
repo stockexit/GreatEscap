@@ -20,7 +20,6 @@ st.markdown("""
     /* 헤더는 숨기지 않고, 배경을 투명하게 해서 메뉴 버튼만 남김 */
     header[data-testid="stHeader"] {
         background-color: rgba(0,0,0,0);
-        color: white;
     }
     
     /* 사이드바 너비 고정 */
@@ -42,23 +41,7 @@ def load_data(csv_url):
 
 df_sheet = load_data(url)
 
-# 4. 사이드바 종목 선택 메뉴
-if df_sheet is not None and not df_sheet.empty:
-    st.sidebar.markdown("## 🎯 분석 종목 리스트")
-    st.sidebar.write("---")
-    
-    stock_names = df_sheet['종목명'].unique().tolist()
-    # 선택창
-    selected = st.sidebar.selectbox("종목을 고르세요 👇", stock_names)
-    s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
-    
-    st.sidebar.write("---")
-    st.sidebar.success(f"현재 분석 중: **{selected}**")
-else:
-    st.error("데이터 로딩 실패! 시트 설정을 확인해주세요.")
-    st.stop()
-
-# 5. 차트 그리기 함수 (SyntaxError 모든 지점 완벽 수술)
+# 4. 차트 그리기 함수 (SyntaxError 모든 지점 완벽 수술)
 def draw_chart(ticker, period, title):
     try:
         # try-except 구조 완성
@@ -90,17 +73,37 @@ def draw_chart(ticker, period, title):
     except:
         return st.error(f"⚠️ {title}: 데이터 로드 실패")
 
-# 6. 메인 화면 구성
-st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
+# 5. 메인 로직 실행
+if df_sheet is not None and not df_sheet.empty:
+    # 사이드바 종목 선택
+    st.sidebar.markdown("## 🎯 분석 종목 리스트")
+    st.sidebar.write("---")
+    
+    stock_names = df_sheet['종목명'].unique().tolist()
+    selected = st.sidebar.selectbox("종목을 고르세요 👇", stock_names)
+    s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
+    
+    st.sidebar.write("---")
+    st.sidebar.success(f"현재 분석 중: **{selected}**")
 
-# 함수 호출 괄호 완벽 마감
-col1, col2 = st.columns(2)
-with col1:
-    draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
-with col2:
-    draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장")
+    # 메인 화면 구성
+    st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
 
-st.write("---")
+    # 함수 호출 괄호 완벽 마감
+    col1, col2 = st.columns(2)
+    with col1:
+        draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
+    with col2:
+        draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장")
 
-# 7. 하단 리포트 f-string 중괄호 완벽 마감
-c_a
+    st.write("---")
+
+    # 변수 정의를 로직 안으로 이동
+    c_a, c_b = st.columns([1, 2])
+    with c_a:
+        st.metric("사장님 목표가", f"{s_info['적정가']}")
+    with c_b:
+        # f-string 중괄호 마감
+        st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
+else:
+    st.error("데이터 로딩 실패! 시트 설정을 확인해주세요.")
