@@ -345,26 +345,26 @@ if df_sheet is not None:
                     eps_series = raw_data['EPS(원)']
 
                     # ---------------------------------------------------------
-                    # [계산 영역] 모든 지표 미리 계산
+                    # [계산 영역]
                     # ---------------------------------------------------------
-                    # 1. 평균값 계산
+                    # 1. 평균 및 최신 실적
                     eps_mean_10 = eps_series.mean()
                     eps_mean_5 = eps_series.tail(5).mean()
                     latest_eps = eps_series.iloc[-1]
 
-                    # 2. [신규 요청] 최신 EPS vs 10년 평균 성장률 계산
+                    # 2. [상단] 최신 EPS vs 10년 평균 성장률
                     if eps_mean_10 > 0:
                         latest_vs_10y_rate = ((latest_eps - eps_mean_10) / eps_mean_10) * 100
                     else:
                         latest_vs_10y_rate = 0
 
-                    # 3. [기존 요청] 평균 vs 평균 모멘텀 계산
+                    # 3. [하단] 체력 모멘텀 (5년 평균 vs 10년 평균)
                     if eps_mean_10 > 0:
                         momentum_avg = ((eps_mean_5 - eps_mean_10) / eps_mean_10) * 100
                     else:
                         momentum_avg = 0
 
-                    # 4. CAGR 계산
+                    # 4. CAGR (연평균 성장률)
                     df_max = raw_data
                     period_max = len(df_max)
                     label_max = f"{period_max}년 연평균 성장 (CAGR)" if period_max < 10 else "10년 연평균 성장 (CAGR)"
@@ -385,31 +385,41 @@ if df_sheet is not None:
                     cagr_5_str = calculate_cagr(df_5)
 
                     # ---------------------------------------------------------
-                    # [화면 배치 영역] 요청하신 순서대로 배치
+                    # [화면 배치] 요청대로 수정됨 (delta_color 복구)
                     # ---------------------------------------------------------
                     
-                    # [파트 1] 기초 체력 분석 (상단)
+                    # [파트 1] 기초 체력 분석 (최신 vs 평균)
                     st.markdown("##### 1️⃣ 기초 체력 분석 (최신 실적 vs 장기 평균)")
                     c_t1, c_t2, c_t3 = st.columns(3)
                     with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
                     with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
-                    # 요청하신 '최신 EPS 상승률(vs 10년 평균)'을 여기에 배치
-                    with c_t3: st.metric("최신 EPS 성장률 (vs 10년평균)", f"{latest_vs_10y_rate:+.1f}%", delta_color="normal")
+                    
+                    # 여기가 요청하신 '최신 EPS vs 10년 평균' (초록색 부활!)
+                    with c_t3: 
+                        st.metric("최신 EPS 성장률 (vs 10년평균)", 
+                                  f"{latest_vs_10y_rate:+.1f}%", 
+                                  f"{latest_vs_10y_rate:+.1f}%", 
+                                  delta_color="normal")
                     
                     st.write("---")
 
-                    # [파트 2] 추세 및 모멘텀 분석 (하단)
+                    # [파트 2] 추세 분석 (CAGR & 모멘텀)
                     st.markdown("##### 2️⃣ 추세 및 모멘텀 분석")
                     c_b1, c_b2, c_b3 = st.columns(3)
                     with c_b1: st.metric(label_max, cagr_max_str)
                     with c_b2: st.metric("최근 5년 연평균 성장", cagr_5_str)
-                    # 아까 위에 있던 '평균 vs 평균 모멘텀'을 여기로 이동
-                    with c_b3: st.metric("체력 모멘텀 (5년평균 vs 10년평균)", f"{momentum_avg:+.1f}%", delta_color="normal")
+                    
+                    # 여기가 내려온 '체력 모멘텀' (초록색 부활!)
+                    with c_b3: 
+                        st.metric("체력 모멘텀 (5년평균 vs 10년평균)", 
+                                  f"{momentum_avg:+.1f}%", 
+                                  f"{momentum_avg:+.1f}%", 
+                                  delta_color="normal")
 
                     st.write("---")
                     
                     # ---------------------------------------------------------
-                    # [파트 3] 데이터 표 & 차트 (기존 유지)
+                    # [파트 3] 표 & 차트 (유지)
                     # ---------------------------------------------------------
                     st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
                     
@@ -435,7 +445,6 @@ if df_sheet is not None:
                         textfont=dict(color="white", size=11)
                     ), secondary_y=True)
                     
-                    # 평균선 표시
                     fig.add_hline(y=eps_mean_10, line_dash="dash", line_color="#FFAB00", line_width=2, secondary_y=True,
                                   annotation_text=f"10년평균: {eps_mean_10:,.0f}", annotation_position="top left", annotation_font_color="#FFAB00")
                     fig.add_hline(y=eps_mean_5, line_dash="dot", line_color="#D500F9", line_width=2, secondary_y=True,
