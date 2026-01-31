@@ -340,32 +340,77 @@ if df_sheet is not None:
                     display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
                 
                 if display_df is not None:
-                    # -----------------------------------------------------
-                    # [복구] 평균값 기반 모멘텀 계산 (요청 사항 반영)
-                    # -----------------------------------------------------
                     raw_data = raw_data.sort_values('연도') # 과거 -> 최신
                     eps_series = raw_data['EPS(원)']
+
+                    # ========================================================
+                    # PART 1. 기초 체력 분석 (평균값 비교)
+                    # ========================================================
+                    st.markdown("##### 1️⃣ 기초 체력 분석 (평균 EPS Momentum)")
                     
-                    # 1. 평균 계산
-                    eps_mean_10 = eps_series.mean()        # 전체(최대 10년) 평균
-                    eps_mean_5 = eps_series.tail(5).mean() # 최근 5년 평균
+                    eps_mean_10 = eps_series.mean()
+                    eps_mean_5 = eps_series.tail(5).mean()
                     
-                    # 2. 모멘텀 계산 (단순 등락률: (5년평균 - 10년평균)/10년평균)
                     if eps_mean_10 > 0:
                         momentum = ((eps_mean_5 - eps_mean_10) / eps_mean_10) * 100
                     else:
-                        momentum = 0 # 적자거나 분모가 0이면 0 처리
+                        momentum = 0
 
-                    # 화면 표시
                     c_m1, c_m2, c_m3 = st.columns(3)
                     with c_m1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
                     with c_m2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
-                    with c_m3:
-                        st.metric("성장 모멘텀 (Momentum)", f"{momentum:+.1f}%", f"{momentum:+.1f}% (장기평균 대비)", delta_color="normal")
+                    with c_m3: st.metric("체력 모멘텀 (Momentum)", f"{momentum:+.1f}%", f"{momentum:+.1f}% (장기평균 대비)", delta_color="normal")
                     
+                    st.write("---")
+
+                    # ========================================================
+                    # PART 2. 성장 속도 분석 (CAGR)
+                    # ========================================================
+                    st.markdown("##### 2️⃣ 성장 속도 분석 (연평균 성장률 CAGR)")
+                    
+                    # 10년 (또는 상장 이래)
+                    df_max = raw_data
+                    period_max = len(df_max)
+                    label_max = f"{period_max}년 연평균 성장 (CAGR)" if period_max < 10 else "10년 연평균 성장 (CAGR)"
+                    
+                    # 5년
+                    df_5 = raw_data.tail(5) if len(raw_data) >= 5 else raw_data
+                    
+                    # CAGR 계산 함수
+                    def calculate_cagr(df):
+                        if len(df) < 2: return 0, "데이터 부족"
+                        start_eps = df['EPS(원)'].iloc[0]
+                        end_eps = df['EPS(원)'].iloc[-1]
+                        years = len(df) - 1
+                        
+                        if start_eps <= 0: # 적자 출발
+                            if end_eps > 0: return 999, "흑자전환 🎉"
+                            else: return -999, "적자지속 ⚠️"
+                        
+                        try:
+                            cagr = (end_eps / start_eps) ** (1 / years) - 1
+                            return cagr * 100, f"{cagr*100:+.1f}%"
+                        except: return 0, "계산오류"
+
+                    cagr_max_val, cagr_max_str = calculate_cagr(df_max)
+                    cagr_5_val, cagr_5_str = calculate_cagr(df_5)
+                    
+                    c_c1, c_c2, c_c3 = st.columns(3)
+                    with c_c1: st.metric(label_max, cagr_max_str)
+                    with c_c2: st.metric("최근 5년 연평균 성장", cagr_5_str)
+                    with c_c3:
+                         if cagr_max_val != 999 and cagr_5_val != 999:
+                             diff = cagr_5_val - cagr_max_val
+                             st.metric("성장 가속도 (속도 차이)", f"{diff:+.1f}%p", delta_color="normal")
+                         else: st.metric("성장 가속도", "평가불가")
+
+                    st.write("---")
+                    
+                    # ========================================================
+                    # PART 3. 데이터 표 & 차트
+                    # ========================================================
                     st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
                     
-                    # 차트 그리기
                     fig = make_subplots(specs=[[{"secondary_y": True}]])
                     
                     fig.add_trace(go.Bar(
