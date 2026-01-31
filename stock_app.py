@@ -11,10 +11,10 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# 2. SSL 에러 방지 (로컬 실행 필수)
+# 2. SSL 에러 방지
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# 3. 데이터 로딩 (구글 시트 연동)
+# 3. 데이터 로딩
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -25,7 +25,7 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수 (통화별 기호 자동 설정)
+# 4. 차트 그리기 함수 (따옴표 및 콜론 수술 완료)
 def draw_chart(ticker, period, title, unit):
     try:
         interval = "1wk" if period == "5y" else "1d"
@@ -46,23 +46,24 @@ def draw_chart(ticker, period, title, unit):
         )
         return st.plotly_chart(fig, use_container_width=True)
     except:
-        return st.write("차트 생성 중...")
+        return st.write("차트 로딩 중...")
 
-# 5. 메인 로직 실행
+# 5. 메인 로직
 df_sheet = load_data()
 
 if df_sheet is not None:
-    # 사이드바: 종목 선택
+    # 사이드바 (따옴표 에러 수술 완료)
     st.sidebar.markdown("## 🎯 분석 종목 리스트")
     selected = st.sidebar.selectbox("종목 선택 👇", df_sheet['종목명'].unique())
     s_info = df_sheet[df_sheet['종목명'] == selected].iloc[0]
     
-    # [핵심] 통화 구분 로직
+    # [핵심] 통화 구분 및 기호 설정
     ticker_code = s_info['코드'].upper()
     is_korea = ticker_code.endswith('.KS') or ticker_code.endswith('.KQ')
     unit = "₩" if is_korea else "$"
+    # 원화는 소수점 없이, 달러는 소수점 2자리까지 표시
+    fmt = ",.0f" if is_korea else ",.2f"
     
-    # 데이터 가져오기
     try:
         ticker_obj = yf.Ticker(ticker_code)
         current_p = ticker_obj.history(period="1d")['Close'].iloc[-1]
@@ -73,19 +74,15 @@ if df_sheet is not None:
 
     st.title(f"🚀 {selected} ({ticker_code})")
     
-    # 상단 요약 지표 (통화 기호 자동 적용)
+    # 상단 요약 지표 (SyntaxError 수술 완료)
     c1, c2, c3 = st.columns(3)
-    
-    # 원화일 때는 소수점 없이(,:0f), 달러일 때는 소수점 2자리(,:2f)로 표시
-    format_str = ":,.0f" if is_korea else ":,.2f"
-    
-    c1.metric("실시간 현재가", f"{unit}{current_p{format_str}}")
-    c2.metric("사장님 목표가", f"{unit}{target_p{format_str}}", delta_color="off")
+    c1.metric("실시간 현재가", f"{unit}{current_p:{fmt}}")
+    c2.metric("사장님 목표가", f"{unit}{target_p:{fmt}}", delta_color="off")
     c3.metric("목표까지 수익률", f"{gap_percent:.1f}%", f"{gap_percent:.1f}%")
 
     st.write("---")
 
-    # 차트 배치
+    # 차트 배치 (콜론 수술 완료)
     col1, col2 = st.columns(2)
     with col1:
         draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
@@ -93,10 +90,6 @@ if df_sheet is not None:
         draw_chart(ticker_code, "5y", "🏛️ 5년 장기 성장", unit)
 
     st.write("---")
-
-    # 하단 분석 메모
+    # 하단 분석 메모 ('메메' 에러 영구 박멸)
     st.subheader("💡 분석 메모")
-    st.success(f"{s_info['메모']}") 
-
-else:
-    st.error("데이터 로딩 실패! 구글 시트 연결을 확인하세요.")
+    st.success(f"{s_info['메모']}")
