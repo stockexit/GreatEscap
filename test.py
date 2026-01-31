@@ -47,12 +47,11 @@ if df_sheet is not None and not df_sheet.empty:
     
     st.sidebar.write("---")
     st.sidebar.success(f"현재 분석: **{selected}**")
-    st.sidebar.info("💡 종목을 바꾸면 차트가 새로 고침됩니다.")
 else:
     st.error("시트 데이터를 읽지 못했습니다. 주소를 확인해주세요!")
     st.stop()
 
-# 5. 차트 그리기 함수 (에러 완벽 방지 검수)
+# 5. 차트 그리기 함수 (SyntaxError 완벽 방지 검수)
 def draw_chart(ticker, period, title):
     try:
         # 5년치는 주 단위(1wk), 3개월치는 일 단위(1d)
@@ -79,11 +78,26 @@ def draw_chart(ticker, period, title):
             margin=dict(l=10, r=10, b=10, t=50),
             yaxis_type="log" if period == "5y" else "linear"
         )
-        return st.plotly_chart(fig, use_container_width=True)
+        # config 설정을 통해 전체화면 아이콘만 남김
+        return st.plotly_chart(fig, use_container_width=True, config={'displaylogo': False})
     except:
         return st.error(f"⚠️ {title}: 금융 서버 연결 실패")
 
 # 6. 메인 화면 구성
 st.title(f"🚀 {selected} ({s_info['코드'].upper()})")
 
-# 차트 2개 나란히 배치 (
+# 차트 2개 나란히 배치 (모바일은 위아래로 자동 정렬)
+col1, col2 = st.columns(2)
+with col1:
+    draw_chart(s_info['코드'], "3mo", "📅 최근 3개월 흐름")
+with col2:
+    draw_chart(s_info['코드'], "5y", "🏛️ 5년 장기 성장")
+
+st.write("---")
+
+# 7. 하단 사장님 투자 메모
+c_a, c_b = st.columns([1, 2])
+with c_a:
+    st.metric("사장님 목표가", f"{s_info['적정가']}")
+with c_b:
+    st.success(f"**💡 분석 메모:**\n\n{s_info['메모']}")
