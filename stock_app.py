@@ -14,7 +14,7 @@ st.set_page_config(
 # 2. SSL 에러 방지
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# 3. 데이터 로딩
+# 3. 데이터 로딩 및 시장 분류
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -23,7 +23,7 @@ def load_data():
         df = pd.read_csv(url)
         df = df.dropna(subset=['종목명'])
         
-        # [신규] 종목별 시장 분류 로직 추가
+        # 코드 끝자리를 보고 시장 자동 분류
         df['Market'] = df['코드'].apply(
             lambda x: "한국(KRW)" if str(x).upper().endswith(('.KS', '.KQ')) else "미국(USD)"
         )
@@ -58,11 +58,11 @@ def draw_chart(ticker, period, title, unit):
 df_sheet = load_data()
 
 if df_sheet is not None:
-    # 사이드바: 1단계 시장 선택
+    # 사이드바: [수정] 한국 시장을 첫 번째로 배치
     st.sidebar.markdown("## 🌍 시장 선택")
-    market_choice = st.sidebar.radio("보고 싶은 시장을 골라주세요", ["미국(USD)", "한국(KRW)"])
+    market_choice = st.sidebar.radio("보고 싶은 시장을 골라주세요", ["한국(KRW)", "미국(USD)"])
     
-    # 2단계: 선택한 시장의 종목만 필터링
+    # 선택한 시장의 종목만 필터링
     filtered_df = df_sheet[df_sheet['Market'] == market_choice]
     
     st.sidebar.markdown("---")
@@ -70,7 +70,7 @@ if df_sheet is not None:
     selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
     s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
     
-    # 통화 기호 설정 (이전 버전 유지)
+    # 통화 및 포맷 설정 (한국은 소수점 없음, 미국은 소수점 2자리)
     ticker_code = s_info['코드'].upper()
     is_korea = market_choice == "한국(KRW)"
     unit = "₩" if is_korea else "$"
@@ -106,4 +106,4 @@ if df_sheet is not None:
     st.subheader("💡 분석 메모")
     st.success(f"{s_info['메모']}") 
 else:
-    st.error("데이터 로딩 실패! 구글 시트 연결을 확인하세요.")
+    st.error("데이터 로딩 실패! 구글 시트 주소를 확인하세요.")
