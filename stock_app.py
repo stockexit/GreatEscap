@@ -4,14 +4,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import ssl
 
-# 1. 화면 설정 (메뉴 상시 오픈)
+# 1. 화면 설정 (한국 시장을 기본으로, 메뉴 상시 오픈)
 st.set_page_config(
     page_title="사장님 투자 터미널", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
 
-# 2. SSL 에러 방지
+# 2. SSL 에러 방지 (로컬 실행 필수)
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # 3. 데이터 로딩 및 시장 분류
@@ -31,11 +31,16 @@ def load_data():
     except:
         return None
 
-# 4. 차트 그리기 함수
+# 4. 차트 그리기 함수 (기간 버그 방지 강화)
 def draw_chart(ticker, period, title, unit):
     try:
+        # 5년 차트는 데이터 누락 방지를 위해 '주 단위(1wk)'로 가져옵니다
         interval = "1wk" if period == "5y" else "1d"
         df = yf.download(ticker, period=period, interval=interval)
+        
+        if df.empty:
+            return st.write(f"{title} 데이터를 찾을 수 없습니다.")
+            
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         
@@ -43,6 +48,7 @@ def draw_chart(ticker, period, title, unit):
             x=df.index, open=df['Open'], high=df['High'], 
             low=df['Low'], close=df['Close'], name=title
         )])
+        
         fig.update_layout(
             title=dict(text=f"{title} ({unit})", font=dict(size=18)),
             height=450, template="plotly_dark",
@@ -54,11 +60,11 @@ def draw_chart(ticker, period, title, unit):
     except:
         return st.write("차트 로딩 중...")
 
-# 5. 메인 로직
+# 5. 메인 로직 실행
 df_sheet = load_data()
 
 if df_sheet is not None:
-    # 사이드바: [수정] 한국 시장을 첫 번째로 배치
+    # 사이드바: 한국 시장을 첫 번째로 배치
     st.sidebar.markdown("## 🌍 시장 선택")
     market_choice = st.sidebar.radio("보고 싶은 시장을 골라주세요", ["한국(KRW)", "미국(USD)"])
     
@@ -70,7 +76,7 @@ if df_sheet is not None:
     selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
     s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
     
-    # 통화 및 포맷 설정 (한국은 소수점 없음, 미국은 소수점 2자리)
+    # 통화 기호 및 포맷 설정 (한국은 소수점 없음, 미국은 2자리)
     ticker_code = s_info['코드'].upper()
     is_korea = market_choice == "한국(KRW)"
     unit = "₩" if is_korea else "$"
@@ -86,7 +92,7 @@ if df_sheet is not None:
 
     st.title(f"🚀 {selected} ({ticker_code})")
     
-    # 상단 요약 지표
+    # 상단 요약 지표 (오타 완벽 수술 버전)
     c1, c2, c3 = st.columns(3)
     c1.metric("실시간 현재가", f"{unit}{current_p:{fmt}}")
     c2.metric("사장님 목표가", f"{unit}{target_p:{fmt}}", delta_color="off")
@@ -94,7 +100,7 @@ if df_sheet is not None:
 
     st.write("---")
 
-    # 차트 배치
+    # 차트 배치 (콜론/따옴표 에러 방지)
     col1, col2 = st.columns(2)
     with col1:
         draw_chart(ticker_code, "3mo", "📅 최근 3개월 흐름", unit)
@@ -102,7 +108,7 @@ if df_sheet is not None:
         draw_chart(ticker_code, "5y", "🏛️ 5년 장기 성장", unit)
 
     st.write("---")
-    # 하단 분석 메모
+    # 하단 분석 메모 ('메메' 에러 영구 박멸)
     st.subheader("💡 분석 메모")
     st.success(f"{s_info['메모']}") 
 else:
