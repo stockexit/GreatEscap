@@ -167,7 +167,7 @@ def fetch_core_financials(api_key, ticker_code):
     except Exception as e: return None, None, f"오류: {e}"
 
 # =========================================================
-# 5. 차트 함수 & 시장 지표 함수 (에러 수정됨)
+# 5. 차트 함수 & 시장 지표 함수
 # =========================================================
 def draw_chart(ticker, period, title, unit, current_price=None, target_min=None, target_max=None, target_buy=None):
     try:
@@ -227,19 +227,17 @@ def fetch_market_data_with_adr(market_code, days=60):
                     else: adr = 100
                         
                     adr_results.append({"Date": pd.to_datetime(date_str), "ADR": adr})
-            except: pass # 하루치 에러나도 패스
+            except: pass 
             
             progress_bar.progress((i + 1) / len(dates))
             time.sleep(0.05) 
             
         progress_bar.empty()
         
-        # [수정된 부분] 데이터가 비었는지 확인하는 안전 장치
         if not adr_results:
             return pd.DataFrame()
 
         df_adr = pd.DataFrame(adr_results)
-        # 'Date' 컬럼이 실제로 생겼는지 확인
         if 'Date' not in df_adr.columns:
             return pd.DataFrame()
             
@@ -253,24 +251,20 @@ def fetch_market_data_with_adr(market_code, days=60):
         return pd.DataFrame()
 
 def draw_market_chart(df, title):
-    """지수(왼쪽축) + ADR(오른쪽축) 이중축 차트 그리기"""
     if df.empty: return st.warning("데이터를 불러오지 못했습니다. (서버/통신 에러)")
     
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    # 왼쪽 Y축: 지수 (파란색 선)
     fig.add_trace(
         go.Scatter(x=df.index, y=df['Index'], name=title.split(' ')[0], line=dict(color='#2962FF', width=2)),
         secondary_y=False,
     )
 
-    # 오른쪽 Y축: ADR (빨간색 선)
     fig.add_trace(
         go.Scatter(x=df.index, y=df['ADR'], name='ADR(등락비율)', line=dict(color='#FF3D00', width=2)),
         secondary_y=True,
     )
 
-    # 과열/침체 기준선 추가
     fig.add_hline(y=100, line_dash="dash", line_color="gray", opacity=0.5, secondary_y=True)
     fig.add_hline(y=80, line_dash="dot", line_color="#00C853", opacity=0.7, annotation_text="침체 (80)", annotation_position="bottom right", secondary_y=True)
     fig.add_hline(y=120, line_dash="dot", line_color="#D500F9", opacity=0.7, annotation_text="과열 (120)", annotation_position="top right", secondary_y=True)
@@ -282,23 +276,19 @@ def draw_market_chart(df, title):
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         yaxis=dict(title=f"{title.split(' ')[0]} 지수", showgrid=False),
-        yaxis2=dict(title="ADR (%)", showgrid=True, gridcolor='rgba(255,255,255,0.1)', range=[60, 140]) # ADR 범위 고정
+        yaxis2=dict(title="ADR (%)", showgrid=True, gridcolor='rgba(255,255,255,0.1)', range=[60, 140]) 
     )
     return st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 # =========================================================
-# 6. 메인 앱 로직 (메뉴 구조 적용)
+# 6. 메인 앱 로직
 # =========================================================
 df_sheet = load_data()
 
-# [사이드바 메뉴 구성]
 st.sidebar.title("사장님 투자 터미널")
 menu = st.sidebar.radio("메뉴 선택", ["📊 개별 종목 분석", "🌍 시장 대시보드 (Beta)"])
 st.sidebar.markdown("---")
 
-# =========================================================
-# MENU 1: 개별 종목 분석
-# =========================================================
 if menu == "📊 개별 종목 분석":
     if df_sheet is not None:
         st.sidebar.markdown("## 🌍 시장 선택")
@@ -339,7 +329,6 @@ if menu == "📊 개별 종목 분석":
                 history = ticker_obj.history(period="1d")
                 current_p = history['Close'].iloc[-1] if not history.empty else 0
 
-                # [회사 개요]
                 summary_text = "정보 가져오는 중..."
                 source_label = ""
                 try:
@@ -373,7 +362,6 @@ if menu == "📊 개별 종목 분석":
                         summary_text = "제공된 정보 없음"
                 except: summary_text = "불러오기 실패"
 
-                # [지표 계산]
                 gap_min = ((t_min - current_p)/current_p)*100 if current_p else 0
                 gap_max = ((t_max - current_p)/current_p)*100 if current_p else 0
                 gap_buy = ((t_buy - current_p)/current_p)*100 if current_p else 0
@@ -466,11 +454,20 @@ if menu == "📊 개별 종목 분석":
                         def calculate_cagr(df):
                             if len(df) < 2: return "데이터 부족"
                             start_eps = df['EPS(원)'].iloc[0]; end_eps = df['EPS(원)'].iloc[-1]; years = len(df)-1
-                            if start_eps <= 0: return "계산 불가(적자)"
+                            
+                            # [핵심 수정] 시작 연도가 적자(0 이하)일 경우, 1원으로 보정하여 성장률 계산 가능하게 함
+                            if start_eps <= 0: 
+                                start_eps = 1 
+                            
+                            # 단, 최근 연도까지 적자라면 성장률 계산 의미 없음
+                            if end_eps <= 0: 
+                                return "적자 지속"
+                                
                             try:
                                 cagr = (end_eps / start_eps) ** (1/years) - 1
                                 return f"{cagr*100:+.1f}%"
                             except: return "계산 오류"
+                            
                         cagr_max_str = calculate_cagr(df_max); cagr_5_str = calculate_cagr(df_5)
 
                         c_t1, c_t2, c_t3 = st.columns(3)
@@ -499,14 +496,10 @@ if menu == "📊 개별 종목 분석":
         else: st.warning("종목 없음")
     else: st.error("데이터 로딩 실패")
 
-# =========================================================
-# MENU 2: 시장 대시보드
-# =========================================================
 elif menu == "🌍 시장 대시보드 (Beta)":
     st.title("🌍 KOREA Market Dashboard")
     st.info("💡 지수(파란색, 왼쪽축)와 ADR(빨간색, 오른쪽축)을 함께 보며 시장의 과열/침체를 판단합니다.")
     
-    # 1. 환율 정보 (공통)
     try:
         usd_krw = yf.Ticker("KRW=X").history(period="1d")['Close'].iloc[-1]
         st.sidebar.markdown(f"### 💵 원/달러 환율: {usd_krw:,.2f}원")
@@ -514,7 +507,6 @@ elif menu == "🌍 시장 대시보드 (Beta)":
 
     m_tab1, m_tab2 = st.tabs(["KOSPI (코스피)", "KOSDAQ (코스닥)"])
     
-    # 2. KOSPI 탭
     with m_tab1:
         with st.spinner("KOSPI 시장 데이터 분석 중... (최근 60일)"):
             df_kospi_combo = fetch_market_data_with_adr("1001", days=60)
@@ -526,7 +518,6 @@ elif menu == "🌍 시장 대시보드 (Beta)":
         else:
             st.warning("현재 시장 데이터를 가져오는데 일시적인 문제가 있습니다. (pykrx 서버 응답 지연 등)")
 
-    # 3. KOSDAQ 탭
     with m_tab2:
         with st.spinner("KOSDAQ 시장 데이터 분석 중... (최근 60일)"):
             df_kosdaq_combo = fetch_market_data_with_adr("2001", days=60)
