@@ -5,3 +5,5 @@ plotly
 opendartreader
 pykrx
 deep-translator
+beautifulsoup4
+requests
