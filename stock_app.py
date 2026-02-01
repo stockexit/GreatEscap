@@ -18,7 +18,7 @@ from deep_translator import GoogleTranslator
 # 1. 화면 설정 & 스타일
 # =========================================================
 st.set_page_config(
-    page_title="사장님 투자 터미널", 
+    page_title="사장님 투자 터미널 (Hybrid)", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
@@ -50,7 +50,6 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
 
-    /* 버튼 스타일링 */
     div[role="radiogroup"] {
         background-color: transparent;
         padding: 5px 0;
@@ -90,7 +89,7 @@ def load_data():
         return None
 
 # =========================================================
-# 3. 데이터 수집 함수들
+# 3. 데이터 수집 함수들 (DART & 네이버)
 # =========================================================
 @st.cache_data(show_spinner=False)
 def fetch_naver_summary(dart_code):
@@ -122,148 +121,167 @@ def fetch_shares_history(ticker_code):
         return df_yearly[['연도', '상장주식수', '시가총액']].reset_index(drop=True)
     except: return pd.DataFrame()
 
-# [연간 데이터] DART 10년
+# [연간 데이터] DART 10년 (안정성 강화: 반환값 2개 보장)
 @st.cache_data(show_spinner=False) 
-def fetch_core_financials(api_key, ticker_code):
-    try: dart = OpenDartReader(api_key)
-    except Exception as e: return None, None, f"API 키 오류: {e}"
-    if len(str(ticker_code)) != 6: return None, None, "조회 불가"
+def fetch_core_financials_dart(api_key, ticker_code):
+    try:
+        dart = OpenDartReader(api_key)
+    except: return None, "API Key Error"
+
+    if len(str(ticker_code)) != 6: return None, "Code Error"
+    
     now_year = datetime.datetime.now().year 
     years = range(now_year, now_year - 12, -1) 
     result_data = []
+    
     try:
         for year in years:
             if len(result_data) >= 10: break
-            df = None
-            try: df = dart.finstate(ticker_code, year, reprt_code='11011')
-            except: pass 
-            if df is not None and not df.empty and 'account_nm' in df.columns:
-                df['account_clean'] = df['account_nm'].astype(str).str.replace(' ', '').str.strip()
-                mask_sales = df['account_clean'].str.contains('매출액|영업수익') & ~df['account_clean'].str.contains('원가|총이익|미실현')
-                mask_op = df['account_clean'].str.contains('영업이익') & ~df['account_clean'].str.contains('기타|금융|관계|지분')
-                mask_net = df['account_clean'].str.contains('당기순이익') & ~df['account_clean'].str.contains('포괄') & ~df['account_clean'].str.contains('비지배')
-                def extract_value(dataframe, mask):
-                    if dataframe.empty: return 0
-                    rows = dataframe[mask]
-                    if rows.empty: return 0
-                    if len(rows) > 1 and '당기순이익' in str(mask):
-                        p_row = rows[rows['account_clean'].str.contains('지배')]
-                        if not p_row.empty: rows = p_row
-                    val_str = str(rows.iloc[0]['thstrm_amount']).replace(',', '').strip()
-                    try: return float(val_str)
-                    except: return 0
-                df_cfs = df[df['fs_div'] == 'CFS']; df_ofs = df[df['fs_div'] == 'OFS']
-                sales = extract_value(df_cfs, mask_sales)
-                op_income = extract_value(df_cfs, mask_op)
-                net_income = extract_value(df_cfs, mask_net)
-                if sales == 0: sales = extract_value(df_ofs, mask_sales)
-                if op_income == 0: op_income = extract_value(df_ofs, mask_op)
-                if net_income == 0: net_income = extract_value(df_ofs, mask_net)
-                if sales != 0 or op_income != 0:
-                    result_data.append({'연도': str(year), '매출액': sales, '영업이익': op_income, '순이익': net_income})
+            try:
+                df = dart.finstate(ticker_code, year, reprt_code='11011') # 사업보고서(연간)
+                if df is not None and not df.empty:
+                    df['account_nm'] = df['account_nm'].astype(str).str.replace(' ', '').str.strip()
+                    
+                    def get_val(nm_list):
+                        # 연결(CFS) 우선, 없으면 별도(OFS)
+                        temp = df[(df['fs_div']=='CFS') & (df['account_nm'].isin(nm_list))]
+                        if temp.empty: temp = df[(df['fs_div']=='OFS') & (df['account_nm'].isin(nm_list))]
+                        if temp.empty: return 0
+                        try:
+                            val = temp.iloc[0]['thstrm_amount']
+                            return float(str(val).replace(',', ''))
+                        except: return 0
+
+                    sales = get_val(['매출액', '수익(매출액)', '영업수익'])
+                    op = get_val(['영업이익', '영업이익(손실)'])
+                    net = get_val(['당기순이익', '당기순이익(손실)'])
+                    
+                    if sales != 0 or op != 0:
+                        result_data.append({'연도': str(year), '매출액': sales, '영업이익': op, '순이익': net})
+            except: pass
             time.sleep(0.05)
+
         if result_data:
             df_dart = pd.DataFrame(result_data)
             df_shares = fetch_shares_history(ticker_code)
-            df_final = pd.merge(df_dart, df_shares, on='연도', how='left') if not df_shares.empty else df_dart
+            
+            # 주식수 병합
+            if not df_shares.empty:
+                df_final = pd.merge(df_dart, df_shares, on='연도', how='left')
+            else:
+                df_final = df_dart
+                df_final['상장주식수'] = 0
+            
             df_final = df_final.sort_values('연도', ascending=False)
-            df_final['EPS(보정)'] = df_final.apply(lambda r: r['순이익']/r['상장주식수'] if r.get('상장주식수',0)>0 else 0, axis=1)
-            df_final['EV/EBIT(배)'] = df_final.apply(lambda r: r['시가총액']/r['영업이익'] if r.get('영업이익',0)>0 else 0, axis=1)
+            
+            # EPS 및 억 단위 변환
             df_final['매출액(억)'] = (df_final['매출액'] / 100000000).round(0)
             df_final['영업이익(억)'] = (df_final['영업이익'] / 100000000).round(0)
             df_final['순이익(억)'] = (df_final['순이익'] / 100000000).round(0)
-            df_final['시가총액(억)'] = (df_final.get('시가총액',0) / 100000000).round(0)
-            df_final['EPS(원)'] = df_final['EPS(보정)'].round(0)
-            df_final['멀티플(배)'] = df_final['EV/EBIT(배)'].round(1)
-            view_cols = ['연도', '매출액(억)', '영업이익(억)', '순이익(억)', '시가총액(억)', '멀티플(배)', 'EPS(원)']
-            return df_final[view_cols].set_index('연도').T, df_final.head(10), "OK"
-        else: return None, None, "데이터 없음"
-    except Exception as e: return None, None, f"오류: {e}"
+            df_final['EPS(원)'] = df_final.apply(lambda r: r['순이익']/r['상장주식수'] if r.get('상장주식수',0)>0 else 0, axis=1).round(0)
+            
+            return df_final, "OK"
+        else:
+            return None, "No Data Found"
+    except Exception as e:
+        return None, str(e) # 에러 시에도 반드시 2개 반환
 
-# [분기 데이터] 네이버 금융 직접 크롤링 (수정됨)
+# [분기 데이터] 네이버 금융 직접 크롤링 (헤더 파싱 강화)
 @st.cache_data(show_spinner=False)
-def fetch_naver_financials(dart_code):
+def fetch_naver_quarterly(dart_code):
     try:
         url = f"https://finance.naver.com/item/main.naver?code={dart_code}"
-        # 네이버 금융 페이지는 'euc-kr' 또는 'cp949' 인코딩 사용
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
         dfs = pd.read_html(res.text, encoding='cp949')
         
         target_df = None
-        # '최근 분기 실적'이 포함된 테이블 찾기
+        
+        # '매출액'이나 '영업이익'이 첫 번째 컬럼(인덱스 후보)에 있는 테이블 찾기
         for df in dfs:
-            if isinstance(df.columns, pd.MultiIndex):
-                # 멀티인덱스 컬럼 중 '최근 분기 실적'이 있는지 확인
-                if any('최근 분기 실적' in col for col in df.columns.levels[0]):
-                    target_df = df
-                    break
+            # 데이터프레임이 비어있으면 패스
+            if df.empty: continue
+            
+            # 컬럼이나 첫 번째 열에 핵심 키워드가 있는지 확인
+            first_col_values = df.iloc[:, 0].astype(str).values.tolist() if df.shape[1] > 0 else []
+            if any("매출액" in s for s in first_col_values) or any("영업이익" in s for s in first_col_values):
+                target_df = df
+                break
         
         if target_df is None: return None
 
-        # --- [중요] 컬럼 정리 (MultiIndex -> Single Index) ---
-        # ('최근 분기 실적', '2024.09') -> '2024.09' 형태로 변환
-        new_columns = []
-        for col in target_df.columns:
-            if col[0] == '최근 분기 실적':
-                new_columns.append(col[1]) # 날짜만 가져옴
-            else:
-                new_columns.append("IGNORE") # 연간 실적 등은 제외
+        # --- [강력한 헤더 정리 로직] ---
+        # MultiIndex(두 줄 헤더)인 경우와 SingleIndex인 경우 모두 처리
         
-        target_df.columns = new_columns
+        # 1. 컬럼 이름을 문자열 리스트로 평탄화
+        cols = []
+        if isinstance(target_df.columns, pd.MultiIndex):
+            for col in target_df.columns:
+                # 튜플을 문자열로 합침 (예: ('최근 분기 실적', '2024.09') -> '2024.09')
+                # 날짜 패턴이 있는 부분만 가져오기
+                found_date = False
+                for part in col:
+                    if re.search(r'\d{4}\.\d{2}', str(part)):
+                        cols.append(str(part))
+                        found_date = True
+                        break
+                if not found_date:
+                    cols.append("IGNORE") # 날짜가 없으면 무시
+        else:
+            cols = [str(c) for c in target_df.columns]
+
+        target_df.columns = cols
         
-        # 'IGNORE' 컬럼 제거 (분기 데이터만 남김)
-        target_df = target_df.loc[:, target_df.columns != "IGNORE"]
-        
-        # 첫 번째 컬럼(주요재무정보)을 인덱스로 설정
-        target_df.set_index(target_df.columns[0], inplace=True)
-        
-        # 필요한 행 추출
+        # 2. 첫 번째 컬럼을 인덱스로 설정 (매출액, 영업이익 등이 있는 열)
+        # 보통 0번 컬럼이 계정명임. 하지만 'IGNORE'로 되었을 수 있으니 확인
+        if "IGNORE" in target_df.columns[0] or "주요재무정보" in str(dfs[0].columns):
+             # 0번째 열의 데이터를 인덱스로 씀
+             target_df.set_index(target_df.columns[0], inplace=True)
+        else:
+             target_df.set_index(target_df.columns[0], inplace=True)
+
+        # 3. 날짜 형식이 아닌 컬럼 제거 ('전년동기' 등)
+        valid_cols = [c for c in target_df.columns if re.search(r'\d{4}\.\d{2}', str(c))]
+        target_df = target_df[valid_cols]
+
+        # 4. 데이터 추출
         row_map = {
             '매출액': '매출액(억)',
             '영업이익': '영업이익(억)',
             '당기순이익': '순이익(억)'
         }
         
-        result_data = []
-        
-        # 각 날짜 컬럼별로 데이터 추출
-        for date_col in target_df.columns:
-            # 날짜 정제 (예: 2024.12(E) -> 2024.12)
-            date_clean = str(date_col).replace('(E)', '').strip()
-            # 날짜 형식이 아니면 스킵 (빈칸 등)
-            if not re.search(r'\d{4}\.\d{2}', date_clean): continue
-            
+        result = []
+        for col in target_df.columns:
+            date_clean = str(col).replace('(E)', '').replace('(잠정)', '').strip()
             row_data = {'분기': date_clean}
             
             for key_keyword, new_key in row_map.items():
                 try:
-                    # 인덱스 이름에 키워드가 포함된 행 찾기 (예: '영업이익'이 포함된 행)
-                    # exact match가 아니라 contains를 써야 '영업이익(발표기준)' 등도 잡음
-                    # 하지만 '영업이익률' 같은건 제외해야 함 -> 보통 위에서부터 찾아서 첫번째꺼 쓰면 됨
+                    # 해당 키워드가 포함된 행 찾기
                     found_rows = target_df.index[target_df.index.str.contains(key_keyword, na=False)]
-                    
-                    # 정확한 매칭을 위해... 보통 네이버 표 순서상 상단에 위치함.
-                    # '영업이익' 행을 찾고 값을 가져옴
-                    val = target_df.loc[found_rows[0], date_col]
-                    
-                    # 값 정제 (콤마 제거, float 변환)
-                    if pd.notna(val) and str(val).strip() != '-':
-                        row_data[new_key] = int(float(str(val).replace(',', '')))
+                    if len(found_rows) > 0:
+                        val = target_df.loc[found_rows[0], col]
+                        if pd.notna(val) and str(val).strip() != '-':
+                            # 쉼표 제거 후 정수 변환
+                            row_data[new_key] = int(float(str(val).replace(',', '')))
+                        else:
+                            row_data[new_key] = 0
                     else:
                         row_data[new_key] = 0
                 except:
                     row_data[new_key] = 0
             
-            result_data.append(row_data)
+            # 데이터가 모두 0이면 의미 없으므로 제외할 수도 있으나, 일단 포함
+            if row_data['매출액(억)'] != 0 or row_data['영업이익(억)'] != 0:
+                result.append(row_data)
             
-        if not result_data: return None
+        if not result: return None
         
-        final_df = pd.DataFrame(result_data)
-        final_df = final_df.sort_values('분기', ascending=False) # 최신순
-        return final_df
+        df_final = pd.DataFrame(result)
+        df_final = df_final.sort_values('분기', ascending=False)
+        return df_final
 
     except Exception as e:
-        # st.error(f"네이버 크롤링 에러: {e}") # 디버깅용
         return None
 
 # =========================================================
@@ -503,7 +521,7 @@ if menu == "📊 개별 종목 분석":
                 else:
                     DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
                     with st.spinner(f"연간 데이터 분석 중... (DART)"):
-                        display_df, msg = fetch_core_financials(DART_API_KEY, dart_code)
+                        display_df, msg = fetch_core_financials_dart(DART_API_KEY, dart_code)
                     
                     if display_df is not None:
                         raw_data = display_df.sort_values('연도')
@@ -550,7 +568,6 @@ if menu == "📊 개별 종목 분석":
 
                         if "연간" in view_option:
                             view_cols = ['연도', '매출액(억)', '영업이익(억)', '순이익(억)', 'EPS(원)']
-                            # 시가총액/멀티플은 있으면 포함
                             if '시가총액(억)' in display_df.columns: view_cols.append('시가총액(억)')
                             if '멀티플(배)' in display_df.columns: view_cols.append('멀티플(배)')
                             
@@ -569,7 +586,7 @@ if menu == "📊 개별 종목 분석":
                         
                         else: # 분기 또는 TTM (네이버)
                             with st.spinner("분기 데이터 조회 중... (네이버)"):
-                                df_quarter = fetch_naver_summary(dart_code)
+                                df_quarter = fetch_naver_quarterly(dart_code)
                             
                             if df_quarter is not None:
                                 if "TTM" in view_option: # TTM 계산
@@ -586,7 +603,7 @@ if menu == "📊 개별 종목 분석":
                                         fig_ttm.add_trace(go.Bar(x=df_ttm['분기'], y=df_ttm['영업이익(억)'], name='영업이익(TTM)', marker_color='#FF7043'))
                                         fig_ttm.update_layout(title="연환산(TTM) 실적 추이", template="plotly_dark", barmode='group', height=400)
                                         st.plotly_chart(fig_ttm, use_container_width=True)
-                                    else: st.warning("TTM 계산을 위한 데이터 부족")
+                                    else: st.warning("TTM 계산을 위한 데이터 부족 (최소 4분기 필요)")
                                 else: # 순수 분기
                                     st.dataframe(df_quarter.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
                                     fig_q = go.Figure()
