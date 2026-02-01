@@ -52,19 +52,22 @@ st.markdown("""
 
     /* 버튼 스타일링 */
     div[role="radiogroup"] {
-        background-color: #1e1e1e;
-        padding: 5px;
-        border-radius: 8px;
-        display: inline-flex;
+        background-color: transparent;
+        padding: 5px 0;
         margin-bottom: 10px;
-        border: 1px solid #444;
     }
     div[role="radiogroup"] label {
+        background-color: #1e1e1e;
+        border: 1px solid #444;
         padding: 5px 20px;
         border-radius: 6px;
         font-weight: bold;
-        margin: 0 2px;
-        transition: background-color 0.3s;
+        margin-right: 8px;
+    }
+    div[role="radiogroup"] label[data-checked="true"] {
+        background-color: #FF4B4B !important;
+        color: white !important;
+        border-color: #FF4B4B !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -119,7 +122,7 @@ def fetch_shares_history(ticker_code):
         return df_yearly[['연도', '상장주식수', '시가총액']].reset_index(drop=True)
     except: return pd.DataFrame()
 
-# [연간 데이터]
+# [연간 데이터] DART 10년 (장기 추세용)
 @st.cache_data(show_spinner=False) 
 def fetch_core_financials(api_key, ticker_code):
     try: dart = OpenDartReader(api_key)
@@ -177,111 +180,77 @@ def fetch_core_financials(api_key, ticker_code):
         else: return None, None, "데이터 없음"
     except Exception as e: return None, None, f"오류: {e}"
 
-# [분기 데이터] 정밀 계산
+# [분기 데이터] 네이버 금융 직접 크롤링 (가장 정확)
 @st.cache_data(show_spinner=False)
-def fetch_quarterly_dart_calc(api_key, ticker_code):
+def fetch_naver_financials(dart_code):
     try:
-        dart = OpenDartReader(api_key)
-        now_year = datetime.datetime.now().year
-        # 최근 3년
-        years = range(now_year, now_year - 4, -1) 
+        url = f"https://finance.naver.com/item/main.naver?code={dart_code}"
+        dfs = pd.read_html(url, encoding='cp949')
         
-        quarter_data = []
-        progress_bar = st.progress(0)
-        total_steps = len(years) * 4
-        current_step = 0
+        # '주요재무제표' 테이블 찾기 (보통 3번째 테이블)
+        target_df = None
+        for df in dfs:
+            if '최근 분기 실적' in str(df.columns) or '주요재무정보' in str(df.columns):
+                target_df = df
+                break
+        
+        if target_df is None: return None
 
-        for year in years:
-            reports = {}
-            for code in ['11013', '11012', '11014', '11011']:
-                current_step += 1
-                progress_bar.progress(min(current_step / total_steps, 1.0))
+        # 컬럼 정리 (MultiIndex 처리)
+        target_df.set_index(target_df.columns[0], inplace=True)
+        
+        # 분기 데이터만 추출 (최근 분기 실적 섹션)
+        # 컬럼 구조가 ('최근 분기 실적', '2024.09') 이런 식이거나 그냥 날짜일 수 있음
+        quarter_cols = [c for c in target_df.columns if '분기' in str(c)]
+        if not quarter_cols: # 만약 '분기' 글자가 없으면 뒤쪽 6개 컬럼이 분기임 (네이버 표준)
+             quarter_cols = target_df.columns[-6:]
+        
+        df_q = target_df[quarter_cols].copy()
+        
+        # 인덱스 정리 (매출액, 영업이익, 당기순이익만 추출)
+        # 네이버는 '매출액', '영업이익', '당기순이익' 이름으로 되어 있음
+        row_map = {
+            '매출액': '매출액(억)',
+            '영업이익': '영업이익(억)',
+            '당기순이익': '순이익(억)'
+        }
+        
+        result_data = []
+        # 컬럼명(날짜) 순회
+        for col in df_q.columns:
+            # col은 ('최근 분기 실적', '2024.09') 튜플이거나 '2024.09' 문자열
+            date_str = col[1] if isinstance(col, tuple) else col
+            # (E) 같은 추정치 마크 제거
+            date_clean = str(date_str).replace('(E)', '').strip()
+            
+            # 값이 없으면 패스
+            if not date_clean or date_clean == 'nan': continue
+
+            data_row = {'분기': date_clean}
+            valid = False
+            for idx_name, new_name in row_map.items():
                 try:
-                    df = dart.finstate(ticker_code, year, reprt_code=code)
-                    if df is not None and not df.empty:
-                        df['account_nm'] = df['account_nm'].astype(str).str.strip()
-                        def get_val(nm_list):
-                            temp = df[(df['fs_div']=='CFS') & (df['account_nm'].isin(nm_list))]
-                            if temp.empty:
-                                temp = df[(df['fs_div']=='OFS') & (df['account_nm'].isin(nm_list))]
-                            if temp.empty: return 0
-                            try:
-                                val = temp.iloc[0]['thstrm_amount']
-                                return float(str(val).replace(',', ''))
-                            except: return 0
-
-                        sales = get_val(['매출액', '수익(매출액)', '영업수익'])
-                        op = get_val(['영업이익', '영업이익(손실)'])
-                        net = get_val(['당기순이익', '당기순이익(손실)', '분기순이익', '분기순이익(손실)', '반기순이익', '반기순이익(손실)'])
-                        reports[code] = {'sales': sales, 'op': op, 'net': net}
-                    time.sleep(0.05) 
-                except: pass
+                    # 인덱스 이름이 포함된 행 찾기
+                    val = df_q.loc[df_q.index.str.contains(idx_name), col].iloc[0]
+                    if pd.notna(val):
+                        data_row[new_name] = int(val) # 네이버는 이미 억 단위
+                        valid = True
+                    else:
+                        data_row[new_name] = 0
+                except:
+                    data_row[new_name] = 0
             
-            if '11013' in reports:
-                q1 = reports['11013']
-                quarter_data.append({'분기': f"{year}.1Q", '매출액(억)': q1['sales'], '영업이익(억)': q1['op'], '순이익(억)': q1['net']})
-                if '11012' in reports:
-                    acc_half = reports['11012']
-                    q2_sales = acc_half['sales'] - q1['sales']
-                    q2_op = acc_half['op'] - q1['op']
-                    q2_net = acc_half['net'] - q1['net']
-                    quarter_data.append({'분기': f"{year}.2Q", '매출액(억)': q2_sales, '영업이익(억)': q2_op, '순이익(억)': q2_net})
-                    if '11014' in reports:
-                        acc_3q = reports['11014']
-                        q3_sales = acc_3q['sales'] - acc_half['sales']
-                        q3_op = acc_3q['op'] - acc_half['op']
-                        q3_net = acc_3q['net'] - acc_half['net']
-                        quarter_data.append({'분기': f"{year}.3Q", '매출액(억)': q3_sales, '영업이익(억)': q3_op, '순이익(억)': q3_net})
-                        if '11011' in reports:
-                            acc_year = reports['11011']
-                            q4_sales = acc_year['sales'] - acc_3q['sales']
-                            q4_op = acc_year['op'] - acc_3q['op']
-                            q4_net = acc_year['net'] - acc_3q['net']
-                            quarter_data.append({'분기': f"{year}.4Q", '매출액(억)': q4_sales, '영업이익(억)': q4_op, '순이익(억)': q4_net})
-
-        progress_bar.empty()
-        
-        if not quarter_data: return None
-        
-        df_res = pd.DataFrame(quarter_data)
-        # 억 단위 변환
-        for col in ['매출액(억)', '영업이익(억)', '순이익(억)']:
-            df_res[col] = (df_res[col] / 100000000).round(0)
+            if valid: result_data.append(data_row)
             
-        df_res = df_res.sort_values('분기', ascending=False)
-        return df_res
+        if not result_data: return None
+        
+        final_df = pd.DataFrame(result_data)
+        # 최신순 정렬 (네이버는 과거->미래 순이므로 역순 정렬)
+        final_df = final_df.sort_values('분기', ascending=False)
+        return final_df
 
     except Exception as e:
         return None
-
-# [분기 데이터] yfinance 활용
-@st.cache_data(show_spinner=False)
-def fetch_quarterly_data(yf_code):
-    try:
-        ticker = yf.Ticker(yf_code)
-        q_financials = ticker.quarterly_income_stmt.T
-        if q_financials.empty: return None
-        
-        q_financials = q_financials.reset_index()
-        q_financials.rename(columns={'index': 'Date'}, inplace=True)
-        q_financials['Date'] = q_financials['Date'].dt.strftime('%Y-%m')
-        
-        cols_map = {'Total Revenue': '매출액(억)', 'Operating Income': '영업이익(억)', 'Net Income': '순이익(억)'}
-        final_data = []
-        for _, row in q_financials.iterrows():
-            data = {'분기': row['Date']}
-            for eng, kor in cols_map.items():
-                if eng in row:
-                    val = row[eng]
-                    if pd.notna(val): data[kor] = round(val / 100000000, 0)
-                    else: data[kor] = 0
-            final_data.append(data)
-            
-        df_q = pd.DataFrame(final_data)
-        if df_q.empty: return None
-        df_q = df_q.sort_values('분기', ascending=False)
-        return df_q
-    except: return None
 
 # =========================================================
 # 5. 차트 함수 & 시장 지표 함수
@@ -519,7 +488,9 @@ if menu == "📊 개별 종목 분석":
                     st.info("미국 주식은 지원하지 않습니다.")
                 else:
                     DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
-                    display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
+                    with st.spinner(f"데이터 분석 중... ({selected})"):
+                        # 연간은 DART, 분기는 네이버 크롤링
+                        display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
                     
                     if display_df is not None:
                         raw_data = raw_data.sort_values('연도')
@@ -564,8 +535,8 @@ if menu == "📊 개별 종목 분석":
                         st.write("")
 
                         if "연환산" in view_option:
-                            with st.spinner("분기 데이터를 기반으로 TTM(연환산) 계산 중..."):
-                                df_quarter = fetch_quarterly_dart_calc(DART_API_KEY, dart_code)
+                            with st.spinner("분기 데이터 분석 중..."):
+                                df_quarter = fetch_naver_financials(dart_code)
                                 if df_quarter is not None and len(df_quarter) >= 4:
                                     df_quarter = df_quarter.sort_values('분기')
                                     cols_to_sum = ['매출액(억)', '영업이익(억)', '순이익(억)']
@@ -596,8 +567,8 @@ if menu == "📊 개별 종목 분석":
                             st.plotly_chart(fig, use_container_width=True)
                         
                         else: # 분기 선택 시
-                            with st.spinner("분기 데이터 분석 중..."):
-                                df_quarter = fetch_quarterly_dart_calc(DART_API_KEY, dart_code)
+                            with st.spinner("분기 데이터 로딩 중..."):
+                                df_quarter = fetch_naver_financials(dart_code)
                             
                             if df_quarter is not None:
                                 st.dataframe(df_quarter.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
