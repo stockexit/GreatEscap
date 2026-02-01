@@ -56,6 +56,21 @@ st.markdown("""
         color: #E0E0E0;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
+
+    /* [추가] 라디오 버튼을 탭/버튼처럼 보이게 스타일링 */
+    div[role="radiogroup"] {
+        background-color: #262730;
+        padding: 5px;
+        border-radius: 10px;
+        display: inline-flex;
+    }
+    div[role="radiogroup"] label {
+        padding: 5px 20px;
+        border-radius: 8px;
+        margin-right: 5px;
+        font-weight: bold;
+        transition: background-color 0.3s;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -166,49 +181,33 @@ def fetch_core_financials(api_key, ticker_code):
         else: return None, None, "데이터 없음"
     except Exception as e: return None, None, f"오류: {e}"
 
-# [추가됨] 분기 데이터 가져오기 (yfinance 활용)
 @st.cache_data(show_spinner=False)
 def fetch_quarterly_data(yf_code):
     try:
         ticker = yf.Ticker(yf_code)
-        # 분기 재무제표 (최근 4~5분기 제공됨)
         q_financials = ticker.quarterly_income_stmt.T
         if q_financials.empty: return None
         
-        # 필요한 항목 추출 및 한국어 변환
         q_financials = q_financials.reset_index()
         q_financials.rename(columns={'index': 'Date'}, inplace=True)
-        q_financials['Date'] = q_financials['Date'].dt.strftime('%Y-%m') # 날짜 포맷
+        q_financials['Date'] = q_financials['Date'].dt.strftime('%Y-%m')
         
-        # 주요 컬럼 찾기 (Total Revenue, Operating Income, Net Income)
-        # yfinance 컬럼명은 변동될 수 있어 안전하게 처리
-        cols_map = {
-            'Total Revenue': '매출액(억)',
-            'Operating Income': '영업이익(억)', 
-            'Net Income': '순이익(억)'
-        }
-        
+        cols_map = {'Total Revenue': '매출액(억)', 'Operating Income': '영업이익(억)', 'Net Income': '순이익(억)'}
         final_data = []
         for _, row in q_financials.iterrows():
             data = {'분기': row['Date']}
             for eng, kor in cols_map.items():
                 if eng in row:
-                    # 억 단위 변환
                     val = row[eng]
-                    if pd.notna(val):
-                        data[kor] = round(val / 100000000, 0)
-                    else:
-                        data[kor] = 0
+                    if pd.notna(val): data[kor] = round(val / 100000000, 0)
+                    else: data[kor] = 0
             final_data.append(data)
             
         df_q = pd.DataFrame(final_data)
         if df_q.empty: return None
-        
-        # 최신순 정렬
         df_q = df_q.sort_values('분기', ascending=False)
         return df_q
-    except:
-        return None
+    except: return None
 
 # =========================================================
 # 5. 차트 함수 & 시장 지표 함수
@@ -442,11 +441,11 @@ if menu == "📊 개별 종목 분석":
                     if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
 
             with tab2:
-                # [수정됨] 연간/분기 탭 분리
-                fin_tab1, fin_tab2 = st.tabs(["📊 연간 실적 (10년)", "📆 분기 실적 (최근 5분기)"])
-                
-                # --- [TAB 1] 연간 실적 (기존 DART 로직) ---
-                with fin_tab1:
+                # [수정] 탭(Tab) 대신 라디오 버튼(Toggle)으로 '페이지 내 전환' 구현
+                view_option = st.radio("조회 기준", ["📊 연간 실적 (10년)", "📆 분기 실적 (최근 5분기)"], horizontal=True, label_visibility="collapsed")
+                st.write("") # 간격
+
+                if "연간" in view_option:
                     if not is_korea:
                         st.info("미국 주식은 지원하지 않습니다.")
                     else:
@@ -472,11 +471,8 @@ if menu == "📊 개별 종목 분석":
                             def calculate_cagr(df):
                                 if len(df) < 2: return "데이터 부족"
                                 start_eps = df['EPS(원)'].iloc[0]; end_eps = df['EPS(원)'].iloc[-1]; years = len(df)-1
-                                
-                                # [핵심 수정] 적자였던 기업이 흑자전환 시 성장률 계산을 위해 1원으로 보정
                                 if start_eps <= 0: start_eps = 1 
                                 if end_eps <= 0: return "적자 지속"
-                                    
                                 try:
                                     cagr = (end_eps / start_eps) ** (1/years) - 1
                                     return f"{cagr*100:+.1f}%"
@@ -508,14 +504,12 @@ if menu == "📊 개별 종목 분석":
                             st.plotly_chart(fig, use_container_width=True)
                         else: st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
 
-                # --- [TAB 2] 분기 실적 (yfinance 활용) ---
-                with fin_tab2:
+                else: # [분기] 선택 시
                     st.caption("※ 분기 데이터는 속도를 위해 야후 파이낸스(yfinance) 데이터를 사용합니다.")
                     df_quarter = fetch_quarterly_data(yf_code)
                     if df_quarter is not None:
                         st.dataframe(df_quarter.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
                         
-                        # 분기 차트 (매출/영업이익)
                         fig_q = go.Figure()
                         fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['매출액(억)'], name='매출액', marker_color='#90CAF9'))
                         fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['영업이익(억)'], name='영업이익', marker_color='#2962FF'))
