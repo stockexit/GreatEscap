@@ -18,7 +18,7 @@ from deep_translator import GoogleTranslator
 # 1. 화면 설정 & 스타일
 # =========================================================
 st.set_page_config(
-    page_title="사장님 투자 터미널 (Pro)", 
+    page_title="사장님 투자 터미널 (Final)", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
@@ -122,7 +122,7 @@ def fetch_shares_history(ticker_code):
         return df_yearly[['연도', '상장주식수', '시가총액']].reset_index(drop=True)
     except: return pd.DataFrame()
 
-# [연간 데이터] DART
+# [연간 데이터] DART 10년 (안정적)
 @st.cache_data(show_spinner=False) 
 def fetch_core_financials_dart(api_key, ticker_code):
     try:
@@ -180,33 +180,36 @@ def fetch_core_financials_dart(api_key, ticker_code):
             
             return df_final, "OK"
         else:
-            return None, "No Data Found"
+            return None, "No Data"
     except Exception as e:
         return None, str(e)
 
-# [분기 데이터] 네이버 금융 "최근 분기 실적" 섹션 정밀 타겟팅
+# [분기 데이터] 네이버 금융 직접 크롤링 (헤더 파싱 문제 해결 및 섹션 분리)
 @st.cache_data(show_spinner=False)
-def fetch_naver_quarterly(dart_code):
+def fetch_naver_quarterly_fixed(dart_code):
     try:
         url = f"https://finance.naver.com/item/main.naver?code={dart_code}"
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
         dfs = pd.read_html(res.text, encoding='cp949')
         
         target_df = None
-        # MultiIndex 컬럼인 경우에만 '최근 분기 실적'이 존재함
+        # '최근 분기 실적' 섹션이 있는 테이블 찾기
         for df in dfs:
             if isinstance(df.columns, pd.MultiIndex):
                 if '최근 분기 실적' in df.columns.get_level_values(0):
-                    # [핵심] '최근 분기 실적' 섹션만 떼어냄 -> 연간 실적과 분리됨
-                    target_df = df['최근 분기 실적']
+                    # [중요] 연간 실적은 버리고 분기 실적 부분만 선택
+                    target_df = df['최근 분기 실적'].copy()
                     break
         
         if target_df is None: return None
 
-        # 인덱스 설정 (보통 첫 번째 컬럼이 계정명)
-        # 이미 '최근 분기 실적' 레벨을 떼어냈으므로 Single Index가 됨
-        target_df.set_index(target_df.columns[0], inplace=True)
-        
+        # 인덱스 설정 (계정명)
+        # 보통 첫 번째 컬럼이 '매출액', '영업이익' 등임
+        if '주요재무정보' in str(target_df.columns[0]):
+             target_df.set_index(target_df.columns[0], inplace=True)
+        else:
+             target_df.set_index(target_df.columns[0], inplace=True)
+
         row_map = {
             '매출액': '매출액(억)',
             '영업이익': '영업이익(억)',
@@ -214,22 +217,23 @@ def fetch_naver_quarterly(dart_code):
         }
         
         result = []
+        
+        # 컬럼(날짜) 순회
         for col in target_df.columns:
-            # col은 날짜 문자열 (예: 2024.09, 2024.12(E))
+            # col은 이제 '2024.09', '2024.12(E)' 같은 문자열임 (MultiIndex가 제거됨)
             date_clean = str(col).replace('(E)', '').replace('(잠정)', '').strip()
             
-            # 날짜 형식이 아니면 건너뜀 (혹시 모를 오류 방지)
+            # 날짜 형식이 아니면(전년동기 등) 스킵
             if not re.search(r'\d{4}\.\d{2}', date_clean): continue
 
             row_data = {'분기': date_clean}
+            
             for key_keyword, new_key in row_map.items():
                 try:
-                    # 해당 키워드가 포함된 행 찾기 (예: 영업이익)
-                    # na=False로 NaN 인덱스 에러 방지
+                    # 해당 키워드가 포함된 행 찾기
                     found_rows = target_df.index[target_df.index.str.contains(key_keyword, na=False)]
-                    
                     if len(found_rows) > 0:
-                        # 첫번째 발견된 행 사용 (보통 가장 상단이 메인 계정)
+                        # 첫 번째 매칭된 행의 값 가져오기
                         val = target_df.loc[found_rows[0], col]
                         
                         if pd.notna(val) and str(val).strip() != '-':
@@ -241,13 +245,14 @@ def fetch_naver_quarterly(dart_code):
                 except:
                     row_data[new_key] = 0
             
-            # 데이터가 유효한 경우만 추가 (0 0 0 은 제외할 수도 있지만, 적자일 수도 있으므로 포함)
-            result.append(row_data)
+            # 0이 아닌 데이터가 하나라도 있으면 추가
+            if row_data['매출액(억)'] != 0 or row_data['영업이익(억)'] != 0:
+                result.append(row_data)
             
         if not result: return None
         
         df_final = pd.DataFrame(result)
-        # 최신순 정렬 (역순)
+        # 최신순 정렬
         df_final = df_final.sort_values('분기', ascending=False)
         return df_final
 
@@ -533,7 +538,7 @@ if menu == "📊 개별 종목 분석":
                         with c_b3: st.metric("성장 모멘텀", "", delta=f"{momentum_avg:+.1f}%")
                         st.write("---")
 
-                        # [버튼] 연간 실적 (10년) / 분기 실적 (최근 분기) - TTM 제거됨
+                        # [버튼] 연간 / 분기
                         view_option = st.radio("조회 기준", ["연간 실적 (10년)", "분기 실적 (최근 분기)"], horizontal=True, label_visibility="collapsed")
                         st.write("")
 
@@ -557,7 +562,7 @@ if menu == "📊 개별 종목 분석":
                         
                         else: # 분기
                             with st.spinner("분기 데이터 조회 중... (네이버)"):
-                                df_quarter = fetch_naver_quarterly(dart_code)
+                                df_quarter = fetch_naver_quarterly_fixed(dart_code)
                             
                             if df_quarter is not None:
                                 st.dataframe(df_quarter.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
