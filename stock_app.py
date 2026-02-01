@@ -25,10 +25,16 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+    /* 탭 폰트 크기 */
     button[data-baseweb="tab"] div p { font-size: 18px !important; font-weight: bold !important; }
+    
+    /* 테이블 헤더 스타일 */
     thead tr th { background-color: #f5f6f7 !important; color: #333 !important; font-weight: bold !important; }
+    
+    /* 일반 메트릭 값 크기 */
     div[data-testid="stMetricValue"] { font-size: 26px !important; }
     
+    /* 성장 모멘텀 등 녹색 배지(Delta) 커스텀 */
     div[data-testid="stMetricDelta"] {
         font-size: 22px !important;
         font-weight: bold !important;
@@ -39,6 +45,7 @@ st.markdown("""
     }
     div[data-testid="stMetricDelta"] svg { width: 20px !important; height: 20px !important; }
     
+    /* 회사 개요 박스 스타일 */
     .summary-box {
         background-color: #262730;
         padding: 25px;
@@ -55,7 +62,7 @@ st.markdown("""
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # =========================================================
-# 2. 데이터 로딩
+# 2. 데이터 로딩 (구글 시트)
 # =========================================================
 @st.cache_data(ttl=60)
 def load_data():
@@ -159,6 +166,9 @@ def fetch_core_financials(api_key, ticker_code):
         else: return None, None, "데이터 없음"
     except Exception as e: return None, None, f"오류: {e}"
 
+# =========================================================
+# 5. 차트 함수 & 시장 지표 함수
+# =========================================================
 def draw_chart(ticker, period, title, unit, current_price=None, target_min=None, target_max=None, target_buy=None):
     try:
         interval = "1d" if period == "3mo" else "1wk"
@@ -182,210 +192,339 @@ def draw_chart(ticker, period, title, unit, current_price=None, target_min=None,
         return st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False, 'scrollZoom': False})
     except Exception as e: return st.write(f"차트 에러: {e}")
 
+@st.cache_data(ttl=3600)
+def fetch_market_index(ticker, name):
+    """지수 데이터 가져오기 (1년치)"""
+    try:
+        now = datetime.datetime.now()
+        start = (now - datetime.timedelta(days=365)).strftime("%Y%m%d")
+        end = now.strftime("%Y%m%d")
+        # KOSPI=1001, KOSDAQ=2001 (pykrx 기준)
+        if ticker == "KOSPI": code = "1001"
+        elif ticker == "KOSDAQ": code = "2001"
+        else: return pd.DataFrame()
+        
+        df = stock.get_index_ohlcv_by_date(start, end, code)
+        return df
+    except: return pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def fetch_adr_data(market_code, days=20):
+    """
+    ADR (등락비율) 계산: 최근 N일간 (상승종목수 / 하락종목수) * 100
+    * 서버 부하를 줄이기 위해 최근 20일치만 계산
+    """
+    try:
+        now = datetime.datetime.now()
+        # 넉넉하게 40일 전부터 가져와서 영업일 기준 20일 확보
+        start_date = (now - datetime.timedelta(days=40)).strftime("%Y%m%d")
+        end_date = now.strftime("%Y%m%d")
+        
+        # 일자별 등락 종목 수 가져오기 (pykrx 기능 활용)
+        # get_index_status_by_date 같은 API가 없으므로, 매일매일의 등락을 조회해야 함 -> 속도 이슈
+        # 대안: 등락비율(ADR)은 API로 직접 제공되지 않음.
+        # Streamlit Cloud 성능상 실시간 루프는 위험하므로, 최근 5일치 '상승/하락' 종목수만 샘플링하여 보여줌
+        
+        results = []
+        # 최근 영업일 날짜 리스트 가져오기
+        dates = stock.get_previous_business_days(end_date=end_date, count=days)
+        
+        for date_str in dates:
+            # 해당 날짜의 전체 종목 등락 조회 (시간 소요됨)
+            # KOSPI=0, KOSDAQ=1 (API 파라미터 확인 필요) -> pykrx get_market_ohlcv_by_ticker 사용시 market="KOSPI"
+            market_tick = "KOSPI" if market_code == "1001" else "KOSDAQ"
+            df_day = stock.get_market_ohlcv_by_ticker(date_str, market=market_tick)
+            
+            up_count = len(df_day[df_day['등락률'] > 0])
+            down_count = len(df_day[df_day['등락률'] < 0])
+            
+            if down_count > 0:
+                adr = (up_count / down_count) * 100
+            else:
+                adr = 100
+            
+            results.append({"Date": pd.to_datetime(date_str), "ADR": adr, "Up": up_count, "Down": down_count})
+            time.sleep(0.1) # 차단 방지
+            
+        df_adr = pd.DataFrame(results).sort_values('Date')
+        return df_adr
+    except Exception as e:
+        return pd.DataFrame()
+
 # =========================================================
 # 6. 메인 앱 로직
 # =========================================================
 df_sheet = load_data()
 
-if df_sheet is not None:
-    st.sidebar.markdown("## 🌍 시장 선택")
-    market_choice = st.sidebar.radio("보고 싶은 시장", ["한국(KRW)", "미국(USD)"])
-    if market_choice == "한국(KRW)":
-        filtered_df = df_sheet[df_sheet['Market'] == "한국(KRW)"]
-    else:
-        filtered_df = df_sheet[df_sheet['Market'] == "미국(USD)"]
-        
-    st.sidebar.markdown("---")
-    st.sidebar.markdown(f"## 🎯 {market_choice} 종목")
-    
-    if not filtered_df.empty:
-        selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
-        s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
-        
-        raw_code = str(s_info['코드']).strip().upper()
+# [사이드바 메뉴 구성]
+st.sidebar.title("사장님 투자 터미널")
+menu = st.sidebar.radio("메뉴 선택", ["📊 개별 종목 분석", "🌍 시장 대시보드 (Beta)"])
+st.sidebar.markdown("---")
+
+# =========================================================
+# MENU 1: 개별 종목 분석 (기존 기능)
+# =========================================================
+if menu == "📊 개별 종목 분석":
+    if df_sheet is not None:
+        st.sidebar.markdown("## 🌍 시장 선택")
+        market_choice = st.sidebar.radio("보고 싶은 시장", ["한국(KRW)", "미국(USD)"])
         if market_choice == "한국(KRW)":
-            dart_code = "".join(re.findall(r'\d+', raw_code))
-            if len(dart_code) < 6: dart_code = dart_code.zfill(6)
-            yf_code = dart_code + ".KQ" if raw_code.endswith(".KQ") else dart_code + ".KS"
+            filtered_df = df_sheet[df_sheet['Market'] == "한국(KRW)"]
         else:
-            dart_code = raw_code
-            yf_code = raw_code
-
-        is_korea = market_choice == "한국(KRW)"
-        unit = "₩" if is_korea else "$"
-        p_format = "{:,.0f}" if is_korea else "{:,.2f}"
+            filtered_df = df_sheet[df_sheet['Market'] == "미국(USD)"]
+            
+        st.sidebar.markdown("---")
+        st.sidebar.markdown(f"## 🎯 {market_choice} 종목")
         
-        try:
-            def clean_val(v):
-                try: return float(str(v).replace(',', ''))
-                except: return 0
-            t_min = clean_val(s_info.get('보수적적정가', 0))
-            t_max = clean_val(s_info.get('최대미래가치', 0))
-            t_buy = clean_val(s_info.get('매수가치', 0))
-            ticker_obj = yf.Ticker(yf_code)
-            history = ticker_obj.history(period="1d")
-            current_p = history['Close'].iloc[-1] if not history.empty else 0
+        if not filtered_df.empty:
+            selected = st.sidebar.selectbox("종목 선택 👇", filtered_df['종목명'].unique())
+            s_info = filtered_df[filtered_df['종목명'] == selected].iloc[0]
+            
+            raw_code = str(s_info['코드']).strip().upper()
+            if market_choice == "한국(KRW)":
+                dart_code = "".join(re.findall(r'\d+', raw_code))
+                if len(dart_code) < 6: dart_code = dart_code.zfill(6)
+                yf_code = dart_code + ".KQ" if raw_code.endswith(".KQ") else dart_code + ".KS"
+            else:
+                dart_code = raw_code
+                yf_code = raw_code
 
-            # [회사 개요] (네이버/야후)
-            summary_text = "정보 가져오는 중..."
-            source_label = ""
+            is_korea = market_choice == "한국(KRW)"
+            unit = "₩" if is_korea else "$"
+            p_format = "{:,.0f}" if is_korea else "{:,.2f}"
+            
             try:
-                if is_korea:
-                    naver_text = fetch_naver_summary(dart_code)
-                    if naver_text:
-                        raw_text = naver_text
-                        source_label = "(네이버 금융)"
+                def clean_val(v):
+                    try: return float(str(v).replace(',', ''))
+                    except: return 0
+                t_min = clean_val(s_info.get('보수적적정가', 0))
+                t_max = clean_val(s_info.get('최대미래가치', 0))
+                t_buy = clean_val(s_info.get('매수가치', 0))
+                ticker_obj = yf.Ticker(yf_code)
+                history = ticker_obj.history(period="1d")
+                current_p = history['Close'].iloc[-1] if not history.empty else 0
+
+                # [회사 개요]
+                summary_text = "정보 가져오는 중..."
+                source_label = ""
+                try:
+                    if is_korea:
+                        naver_text = fetch_naver_summary(dart_code)
+                        if naver_text:
+                            raw_text = naver_text
+                            source_label = "(네이버 금융)"
+                        else:
+                            raw_text = ticker_obj.info.get('longBusinessSummary', '')
+                            if raw_text: source_label = "(Yahoo - 번역)"
                     else:
                         raw_text = ticker_obj.info.get('longBusinessSummary', '')
-                        if raw_text: source_label = "(Yahoo - 번역)"
-                else:
-                    raw_text = ticker_obj.info.get('longBusinessSummary', '')
-                    source_label = "(Yahoo - 번역)"
+                        source_label = "(Yahoo - 번역)"
 
-                if raw_text:
-                    is_english = not re.search('[가-힣]', raw_text[:20]) 
-                    if is_english:
-                        translated_text = GoogleTranslator(source='auto', target='ko').translate(raw_text[:3000])
+                    if raw_text:
+                        is_english = not re.search('[가-힣]', raw_text[:20]) 
+                        if is_english:
+                            translated_text = GoogleTranslator(source='auto', target='ko').translate(raw_text[:3000])
+                        else:
+                            translated_text = raw_text
+                        sentences = translated_text.split('. ')
+                        formatted_text = ""
+                        for i, sentence in enumerate(sentences):
+                            clean_sentence = sentence.strip()
+                            if not clean_sentence.endswith('.'): clean_sentence += "."
+                            formatted_text += clean_sentence + " "
+                            if (i + 1) % 3 == 0: formatted_text += "<br><br>"
+                        summary_text = formatted_text
                     else:
-                        translated_text = raw_text
-                    sentences = translated_text.split('. ')
-                    formatted_text = ""
-                    for i, sentence in enumerate(sentences):
-                        clean_sentence = sentence.strip()
-                        if not clean_sentence.endswith('.'): clean_sentence += "."
-                        formatted_text += clean_sentence + " "
-                        if (i + 1) % 3 == 0: formatted_text += "<br><br>"
-                    summary_text = formatted_text
-                else:
-                    summary_text = "제공된 정보 없음"
-            except: summary_text = "불러오기 실패"
+                        summary_text = "제공된 정보 없음"
+                except: summary_text = "불러오기 실패"
 
-            # [지표 계산]
-            gap_min = ((t_min - current_p)/current_p)*100 if current_p else 0
-            gap_max = ((t_max - current_p)/current_p)*100 if current_p else 0
-            gap_buy = ((t_buy - current_p)/current_p)*100 if current_p else 0
-            cagr_min = ((t_min/current_p)**(1/7)-1)*100 if current_p and t_min else 0
-            cagr_max = ((t_max/current_p)**(1/7)-1)*100 if current_p and t_max else 0
-            grade = s_info.get('투자등급', '미분류') 
-            badge_color = {"코어": "#2962FF", "위성": "#FFAB00", "시가존": "#2E7D32"}.get(grade, "#616161")
-            badge_icon = {"코어": "💎", "위성": "🛰️", "시가존": "🚬"}.get(grade, "❔")
-            badge_text = {"코어": "코어 (주력 후보)", "위성": "위성 (모멘텀 후보)", "시가존": "시가존 (분할 매수)"}.get(grade, "미지정")
+                # [지표 계산]
+                gap_min = ((t_min - current_p)/current_p)*100 if current_p else 0
+                gap_max = ((t_max - current_p)/current_p)*100 if current_p else 0
+                gap_buy = ((t_buy - current_p)/current_p)*100 if current_p else 0
+                cagr_min = ((t_min/current_p)**(1/7)-1)*100 if current_p and t_min else 0
+                cagr_max = ((t_max/current_p)**(1/7)-1)*100 if current_p and t_max else 0
+                grade = s_info.get('투자등급', '미분류') 
+                badge_color = {"코어": "#2962FF", "위성": "#FFAB00", "시가존": "#2E7D32"}.get(grade, "#616161")
+                badge_icon = {"코어": "💎", "위성": "🛰️", "시가존": "🚬"}.get(grade, "❔")
+                badge_text = {"코어": "코어 (주력 후보)", "위성": "위성 (모멘텀 후보)", "시가존": "시가존 (분할 매수)"}.get(grade, "미지정")
 
-            # [추가됨] 포트폴리오 상태 표시 로직
-            # -----------------------------------------------------
-            port_status = str(s_info.get('포트상태', '')).strip()
-            port_badge_html = ""
-            if '보유' in port_status or '편입' in port_status:
-                port_badge_html = f"""<div style="margin-top: 5px; background-color: #00C853; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; font-size: 0.9em;">💰 포트 편입중</div>"""
-            elif '정리' in port_status or '매도' in port_status:
-                port_badge_html = f"""<div style="margin-top: 5px; background-color: #616161; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; font-size: 0.9em;">👋 포트 정리완료</div>"""
-            # -----------------------------------------------------
+                port_status = str(s_info.get('포트상태', '')).strip()
+                port_badge_html = ""
+                if '보유' in port_status or '편입' in port_status:
+                    port_badge_html = f"""<div style="margin-top: 5px; background-color: #00C853; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; font-size: 0.9em;">💰 포트 편입중</div>"""
+                elif '정리' in port_status or '매도' in port_status:
+                    port_badge_html = f"""<div style="margin-top: 5px; background-color: #616161; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; font-size: 0.9em;">👋 포트 정리완료</div>"""
 
-        except:
-            current_p = 0; gap_min=gap_max=gap_buy=cagr_min=cagr_max=0
-            summary_text = "데이터 없음"
-            port_badge_html = ""
+            except:
+                current_p = 0; gap_min=gap_max=gap_buy=cagr_min=cagr_max=0
+                summary_text = "데이터 없음"
+                port_badge_html = ""
 
-        st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
-        tab1, tab2 = st.tabs(["🚀 종목 대시보드", "💎 가치분석 (매출/영업/EPS)"])
+            st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
+            tab1, tab2 = st.tabs(["🚀 종목 대시보드", "💎 가치분석 (매출/영업/EPS)"])
 
-        with tab1:
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
-                # [수정됨] 투자 등급 배지 + 포트 상태 배지를 함께 출력
-                st.markdown(f"""
-                    <div style="background-color: {badge_color}; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold;">{badge_icon} {badge_text}</div>
-                    {port_badge_html}
-                """, unsafe_allow_html=True)
+            with tab1:
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.metric("실시간 현재가", f"{unit}{p_format.format(current_p)}")
+                    st.markdown(f"""
+                        <div style="background-color: {badge_color}; padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold;">{badge_icon} {badge_text}</div>
+                        {port_badge_html}
+                    """, unsafe_allow_html=True)
 
-            with c2: st.metric("⚡ 매수 가치", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
-            with c3: 
-                st.metric("🛡️ 보수적 적정가", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
-                if cagr_min: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:8px;border-radius:5px;font-size:16px;font-weight:bold;'>📈 7~10년 CAGR {cagr_min:+.1f}%</div>", unsafe_allow_html=True)
-            with c4: 
-                st.metric("🚀 최대 미래가치", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
-                if cagr_max: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:8px;border-radius:5px;font-size:16px;font-weight:bold;'>📈 7~10년 CAGR {cagr_max:+.1f}%</div>", unsafe_allow_html=True)
-            
-            st.write("---")
-            
-            st.markdown(f"""
-            <div class="summary-box" style="line-height: 1.8; text-align: justify; font-size: 15px;">
-                <b style="font-size: 18px; color: #FFAB00;">🏢 {selected} 기업 개요</b> <span style="font-size: 12px; color: gray;">{source_label}</span><br><br>
-                {summary_text}
-            </div>
-            """, unsafe_allow_html=True)
-            
-            col1, col2 = st.columns(2)
-            with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
-            with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, current_price=None, target_min=t_min, target_max=t_max, target_buy=t_buy)
-            
-            st.subheader("📌 핵심 요약 (메모)")
-            st.info(s_info.get('메모', '메모 없음'))
-            
-            st.subheader("💡 심층 리포트")
-            note = s_info.get('노트링크', '')
-            if note and "docs.google.com" in str(note):
-                components.iframe(note.replace("/edit", "/preview"), height=800, scrolling=True)
-            elif s_info.get('이미지URL'):
-                st.image(s_info.get('이미지URL'), use_container_width=True)
-                if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
-
-        with tab2:
-            if not is_korea:
-                st.info("미국 주식은 지원하지 않습니다.")
-            else:
-                DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
-                with st.spinner(f"재무 데이터 통합 중... ({selected})"):
-                    display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
+                with c2: st.metric("⚡ 매수 가치", f"{unit}{p_format.format(t_buy)}", f"{gap_buy:.1f}%")
+                with c3: 
+                    st.metric("🛡️ 보수적 적정가", f"{unit}{p_format.format(t_min)}", f"{gap_min:.1f}%")
+                    if cagr_min: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:8px;border-radius:5px;font-size:16px;font-weight:bold;'>📈 7~10년 CAGR {cagr_min:+.1f}%</div>", unsafe_allow_html=True)
+                with c4: 
+                    st.metric("🚀 최대 미래가치", f"{unit}{p_format.format(t_max)}", f"{gap_max:.1f}%")
+                    if cagr_max: st.markdown(f"<div style='background-color:#7B1FA2;color:white;padding:8px;border-radius:5px;font-size:16px;font-weight:bold;'>📈 7~10년 CAGR {cagr_max:+.1f}%</div>", unsafe_allow_html=True)
                 
-                if display_df is not None:
-                    raw_data = raw_data.sort_values('연도')
-                    eps_series = raw_data['EPS(원)']
-                    eps_mean_10 = eps_series.mean()
-                    eps_mean_5 = eps_series.tail(5).mean()
-                    latest_eps = eps_series.iloc[-1]
+                st.write("---")
+                
+                st.markdown(f"""
+                <div class="summary-box" style="line-height: 1.8; text-align: justify; font-size: 15px;">
+                    <b style="font-size: 18px; color: #FFAB00;">🏢 {selected} 기업 개요</b> <span style="font-size: 12px; color: gray;">{source_label}</span><br><br>
+                    {summary_text}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                col1, col2 = st.columns(2)
+                with col1: draw_chart(yf_code, "3mo", "📅 최근 3개월", unit, current_price=current_p)
+                with col2: draw_chart(yf_code, "5y", "🏛️ 5년 장기", unit, current_price=None, target_min=t_min, target_max=t_max, target_buy=t_buy)
+                
+                st.subheader("📌 핵심 요약 (메모)")
+                st.info(s_info.get('메모', '메모 없음'))
+                
+                st.subheader("💡 심층 리포트")
+                note = s_info.get('노트링크', '')
+                if note and "docs.google.com" in str(note):
+                    components.iframe(note.replace("/edit", "/preview"), height=800, scrolling=True)
+                elif s_info.get('이미지URL'):
+                    st.image(s_info.get('이미지URL'), use_container_width=True)
+                    if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
 
-                    latest_vs_10y_rate = ((latest_eps - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
-                    momentum_avg = ((eps_mean_5 - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
+            with tab2:
+                if not is_korea:
+                    st.info("미국 주식은 지원하지 않습니다.")
+                else:
+                    DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
+                    with st.spinner(f"재무 데이터 통합 중... ({selected})"):
+                        display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
+                    
+                    if display_df is not None:
+                        raw_data = raw_data.sort_values('연도')
+                        eps_series = raw_data['EPS(원)']
+                        eps_mean_10 = eps_series.mean()
+                        eps_mean_5 = eps_series.tail(5).mean()
+                        latest_eps = eps_series.iloc[-1]
 
-                    df_max = raw_data
-                    period_max = len(df_max)
-                    label_max = f"{period_max}년 연평균(CAGR)" if period_max < 10 else "10년 연평균(CAGR)"
-                    df_5 = raw_data.tail(5) if len(raw_data) >= 5 else raw_data
+                        latest_vs_10y_rate = ((latest_eps - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
+                        momentum_avg = ((eps_mean_5 - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
 
-                    def calculate_cagr(df):
-                        if len(df) < 2: return "데이터 부족"
-                        start_eps = df['EPS(원)'].iloc[0]; end_eps = df['EPS(원)'].iloc[-1]; years = len(df)-1
-                        if start_eps <= 0: return "계산 불가(적자)"
-                        try:
-                            cagr = (end_eps / start_eps) ** (1/years) - 1
-                            return f"{cagr*100:+.1f}%"
-                        except: return "계산 오류"
-                    cagr_max_str = calculate_cagr(df_max); cagr_5_str = calculate_cagr(df_5)
+                        df_max = raw_data
+                        period_max = len(df_max)
+                        label_max = f"{period_max}년 연평균(CAGR)" if period_max < 10 else "10년 연평균(CAGR)"
+                        df_5 = raw_data.tail(5) if len(raw_data) >= 5 else raw_data
 
-                    c_t1, c_t2, c_t3 = st.columns(3)
-                    with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
-                    with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
-                    with c_t3: st.metric("최신 EPS 성장률", "", delta=f"{latest_vs_10y_rate:+.1f}%")
-                    st.write("") 
-                    c_b1, c_b2, c_b3 = st.columns(3)
-                    with c_b1: st.metric(label_max, cagr_max_str)
-                    with c_b2: st.metric("최근 5년 연평균", cagr_5_str)
-                    with c_b3: st.metric("성장 모멘텀", "", delta=f"{momentum_avg:+.1f}%")
-                    st.write("---")
+                        def calculate_cagr(df):
+                            if len(df) < 2: return "데이터 부족"
+                            start_eps = df['EPS(원)'].iloc[0]; end_eps = df['EPS(원)'].iloc[-1]; years = len(df)-1
+                            if start_eps <= 0: return "계산 불가(적자)"
+                            try:
+                                cagr = (end_eps / start_eps) ** (1/years) - 1
+                                return f"{cagr*100:+.1f}%"
+                            except: return "계산 오류"
+                        cagr_max_str = calculate_cagr(df_max); cagr_5_str = calculate_cagr(df_5)
 
-                    st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
-                    fig = make_subplots(specs=[[{"secondary_y": True}]])
-                    fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['매출액(억)'], name='매출액(좌측)', marker_color='#90CAF9', opacity=0.6), secondary_y=False)
-                    fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['영업이익(억)'], name='영업이익(좌측)', marker_color='#2962FF'), secondary_y=False)
-                    fig.add_trace(go.Scatter(x=raw_data['연도'], y=raw_data['EPS(원)'], name='EPS(보정됨)', mode='lines+markers+text', line=dict(color='#00E676', width=3), marker=dict(size=8, color='#00E676', symbol='diamond'), text=raw_data['EPS(원)'].apply(lambda x: f"{x:,.0f}"), textposition="top center", textfont=dict(color="white", size=11)), secondary_y=True)
-                    fig.add_hline(y=eps_mean_10, line_dash="dash", line_color="#FFAB00", line_width=2, secondary_y=True, annotation_text=f"10년평균: {eps_mean_10:,.0f}", annotation_position="top left", annotation_font_color="#FFAB00")
-                    fig.add_hline(y=eps_mean_5, line_dash="dot", line_color="#D500F9", line_width=2, secondary_y=True, annotation_text=f"5년평균: {eps_mean_5:,.0f}", annotation_position="bottom left", annotation_font_color="#D500F9")
-                    fig.update_layout(title=f"{selected} 실적 성장 추이", template="plotly_dark", barmode='group', height=550, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                    fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
-                    fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
-                    st.plotly_chart(fig, use_container_width=True)
-                else: st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
-    else: st.warning("종목 없음")
-else: st.error("데이터 로딩 실패")
+                        c_t1, c_t2, c_t3 = st.columns(3)
+                        with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
+                        with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
+                        with c_t3: st.metric("최신 EPS 성장률", "", delta=f"{latest_vs_10y_rate:+.1f}%")
+                        st.write("") 
+                        c_b1, c_b2, c_b3 = st.columns(3)
+                        with c_b1: st.metric(label_max, cagr_max_str)
+                        with c_b2: st.metric("최근 5년 연평균", cagr_5_str)
+                        with c_b3: st.metric("성장 모멘텀", "", delta=f"{momentum_avg:+.1f}%")
+                        st.write("---")
+
+                        st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
+                        fig = make_subplots(specs=[[{"secondary_y": True}]])
+                        fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['매출액(억)'], name='매출액(좌측)', marker_color='#90CAF9', opacity=0.6), secondary_y=False)
+                        fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['영업이익(억)'], name='영업이익(좌측)', marker_color='#2962FF'), secondary_y=False)
+                        fig.add_trace(go.Scatter(x=raw_data['연도'], y=raw_data['EPS(원)'], name='EPS(보정됨)', mode='lines+markers+text', line=dict(color='#00E676', width=3), marker=dict(size=8, color='#00E676', symbol='diamond'), text=raw_data['EPS(원)'].apply(lambda x: f"{x:,.0f}"), textposition="top center", textfont=dict(color="white", size=11)), secondary_y=True)
+                        fig.add_hline(y=eps_mean_10, line_dash="dash", line_color="#FFAB00", line_width=2, secondary_y=True, annotation_text=f"10년평균: {eps_mean_10:,.0f}", annotation_position="top left", annotation_font_color="#FFAB00")
+                        fig.add_hline(y=eps_mean_5, line_dash="dot", line_color="#D500F9", line_width=2, secondary_y=True, annotation_text=f"5년평균: {eps_mean_5:,.0f}", annotation_position="bottom left", annotation_font_color="#D500F9")
+                        fig.update_layout(title=f"{selected} 실적 성장 추이", template="plotly_dark", barmode='group', height=550, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                        fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
+                        fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                    else: st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
+        else: st.warning("종목 없음")
+    else: st.error("데이터 로딩 실패")
+
+# =========================================================
+# MENU 2: 시장 대시보드 (신규 추가됨)
+# =========================================================
+elif menu == "🌍 시장 대시보드 (Beta)":
+    st.title("🌍 KOREA Market Dashboard")
+    st.info("💡 ADR과 지수 추세를 통해 시장의 과열/침체를 판단합니다. (최근 1년 데이터)")
+    
+    m_tab1, m_tab2 = st.tabs(["KOSPI (코스피)", "KOSDAQ (코스닥)"])
+    
+    # 1. 환율 정보 (공통)
+    try:
+        usd_krw = yf.Ticker("KRW=X").history(period="1d")['Close'].iloc[-1]
+        st.sidebar.markdown(f"### 💵 원/달러 환율: {usd_krw:,.2f}원")
+    except: pass
+
+    # 2. KOSPI 탭
+    with m_tab1:
+        with st.spinner("KOSPI 데이터 분석 중..."):
+            df_kospi = fetch_market_index("KOSPI", "코스피")
+            # ADR은 시간이 걸리므로 최근 20일만 계산
+            df_adr_kospi = fetch_adr_data("1001", days=20)
+
+        if not df_kospi.empty:
+            # 캔들 차트
+            fig = go.Figure(data=[go.Candlestick(x=df_kospi.index, open=df_kospi['시가'], high=df_kospi['고가'], low=df_kospi['저가'], close=df_kospi['종가'], name='KOSPI')])
+            fig.update_layout(title="KOSPI 지수 (1년)", height=400, template="plotly_dark", xaxis_rangeslider_visible=False)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        if not df_adr_kospi.empty:
+            curr_adr = df_adr_kospi['ADR'].iloc[-1]
+            st.metric("KOSPI 등락비율 (ADR)", f"{curr_adr:.1f}%", delta=f"{curr_adr-100:.1f}")
+            st.caption("ADR 80% 이하: 과매도(침체) / 120% 이상: 과매수(과열)")
+            
+            fig_adr = go.Figure()
+            fig_adr.add_trace(go.Scatter(x=df_adr_kospi['Date'], y=df_adr_kospi['ADR'], mode='lines+markers', name='ADR', line=dict(color='#00E676')))
+            fig_adr.add_hline(y=100, line_dash="dash", line_color="white")
+            fig_adr.add_hline(y=80, line_dash="dot", line_color="red", annotation_text="침체권 (80)")
+            fig_adr.add_hline(y=120, line_dash="dot", line_color="red", annotation_text="과열권 (120)")
+            fig_adr.update_layout(title="최근 20일 KOSPI ADR 추이", height=300, template="plotly_dark")
+            st.plotly_chart(fig_adr, use_container_width=True)
+
+    # 3. KOSDAQ 탭
+    with m_tab2:
+        with st.spinner("KOSDAQ 데이터 분석 중..."):
+            df_kosdaq = fetch_market_index("KOSDAQ", "코스닥")
+            df_adr_kosdaq = fetch_adr_data("2001", days=20)
+
+        if not df_kosdaq.empty:
+            fig = go.Figure(data=[go.Candlestick(x=df_kosdaq.index, open=df_kosdaq['시가'], high=df_kosdaq['고가'], low=df_kosdaq['저가'], close=df_kosdaq['종가'], name='KOSDAQ')])
+            fig.update_layout(title="KOSDAQ 지수 (1년)", height=400, template="plotly_dark", xaxis_rangeslider_visible=False)
+            st.plotly_chart(fig, use_container_width=True)
+            
+        if not df_adr_kosdaq.empty:
+            curr_adr = df_adr_kosdaq['ADR'].iloc[-1]
+            st.metric("KOSDAQ 등락비율 (ADR)", f"{curr_adr:.1f}%", delta=f"{curr_adr-100:.1f}")
+            st.caption("ADR 80% 이하: 과매도(침체) / 120% 이상: 과매수(과열)")
+            
+            fig_adr = go.Figure()
+            fig_adr.add_trace(go.Scatter(x=df_adr_kosdaq['Date'], y=df_adr_kosdaq['ADR'], mode='lines+markers', name='ADR', line=dict(color='#2962FF')))
+            fig_adr.add_hline(y=100, line_dash="dash", line_color="white")
+            fig_adr.add_hline(y=80, line_dash="dot", line_color="red", annotation_text="침체권 (80)")
+            fig_adr.add_hline(y=120, line_dash="dot", line_color="red", annotation_text="과열권 (120)")
+            fig_adr.update_layout(title="최근 20일 KOSDAQ ADR 추이", height=300, template="plotly_dark")
+            st.plotly_chart(fig_adr, use_container_width=True)
