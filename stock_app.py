@@ -9,8 +9,9 @@ import OpenDartReader
 import time
 import datetime
 import re
+import requests
+from bs4 import BeautifulSoup
 from pykrx import stock 
-# [필수] 번역 라이브러리 (requirements.txt에 deep-translator 추가 필요)
 from deep_translator import GoogleTranslator 
 
 # =========================================================
@@ -44,7 +45,7 @@ st.markdown("""
     }
     div[data-testid="stMetricDelta"] svg { width: 20px !important; height: 20px !important; }
     
-    /* [추가] 회사 개요 박스 스타일 */
+    /* 회사 개요 박스 스타일 */
     .summary-box {
         background-color: #262730;
         padding: 25px;
@@ -76,8 +77,27 @@ def load_data():
         return None
 
 # =========================================================
-# 3. 수정 주식수 & 시가총액 가져오기
+# 3. 네이버 금융 크롤링 (한국 주식용) & 주식수 가져오기
 # =========================================================
+@st.cache_data(show_spinner=False)
+def fetch_naver_summary(dart_code):
+    """네이버 금융에서 기업 개요 크롤링"""
+    try:
+        url = f"https://finance.naver.com/item/main.naver?code={dart_code}"
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # 네이버 금융 '기업개요' 섹션 찾기
+        summary_info = soup.select_one('.summary_info')
+        if summary_info:
+            # FnGuide 요약 내용이 보통 여기에 있음
+            descriptions = summary_info.find_all('p')
+            full_text = " ".join([desc.get_text().strip() for desc in descriptions])
+            return full_text
+        return None
+    except:
+        return None
+
 @st.cache_data(show_spinner=False)
 def fetch_shares_history(ticker_code):
     try:
@@ -261,21 +281,43 @@ if df_sheet is not None:
             t_max = clean_val(s_info.get('최대미래가치', 0))
             t_buy = clean_val(s_info.get('매수가치', 0))
             
-            # yfinance 객체
+            # yfinance 객체 (주가 데이터용)
             ticker_obj = yf.Ticker(yf_code)
             history = ticker_obj.history(period="1d")
             current_p = history['Close'].iloc[-1] if not history.empty else 0
             
-            # [자동 정리] 회사 개요 가져오기 & 문단 정리
+            # [자동] 회사 개요 가져오기 & 문단 정리 로직
             # -----------------------------------------------
             summary_text = "회사 정보를 가져오는 중입니다..."
+            source_label = ""
+            
             try:
-                raw_summary = ticker_obj.info.get('longBusinessSummary', '')
-                if raw_summary:
-                    # 1. 번역 (3000자 제한)
-                    translated_text = GoogleTranslator(source='auto', target='ko').translate(raw_summary[:3000])
-                    
-                    # 2. '벽돌 텍스트'를 문단으로 나누기 (3문장마다 줄바꿈)
+                # 1. 한국 주식이면 -> 네이버 금융 크롤링
+                if is_korea:
+                    naver_text = fetch_naver_summary(dart_code)
+                    if naver_text:
+                        raw_text = naver_text
+                        source_label = "(네이버 금융)"
+                    else:
+                        # 네이버 실패시 yfinance 시도 (보통 한국껀 yfinance에 잘 없지만 백업용)
+                        raw_text = ticker_obj.info.get('longBusinessSummary', '')
+                        if raw_text: source_label = "(Yahoo - 번역)"
+                
+                # 2. 미국 주식이면 -> yfinance 사용
+                else:
+                    raw_text = ticker_obj.info.get('longBusinessSummary', '')
+                    source_label = "(Yahoo - 번역)"
+
+                # 3. 텍스트 가공 (번역 & 줄바꿈)
+                if raw_text:
+                    # 영문인 경우 번역 (한국어 포함 여부 간단 체크)
+                    is_english = not re.search('[가-힣]', raw_text[:20]) 
+                    if is_english:
+                        translated_text = GoogleTranslator(source='auto', target='ko').translate(raw_text[:3000])
+                    else:
+                        translated_text = raw_text
+
+                    # 문단 정리 (마침표 기준)
                     sentences = translated_text.split('. ')
                     formatted_text = ""
                     for i, sentence in enumerate(sentences):
@@ -284,13 +326,14 @@ if df_sheet is not None:
                             clean_sentence += "."
                         formatted_text += clean_sentence + " "
                         
-                        # 3문장마다 줄바꿈 추가
+                        # 3문장마다 줄바꿈
                         if (i + 1) % 3 == 0:
                             formatted_text += "<br><br>"
                     
                     summary_text = formatted_text
                 else:
                     summary_text = "제공된 회사 개요 정보가 없습니다."
+
             except Exception as e:
                 summary_text = f"회사 개요를 불러오지 못했습니다. ({str(e)})"
             # -----------------------------------------------
@@ -326,10 +369,10 @@ if df_sheet is not None:
             
             st.write("---")
             
-            # [UI] 회사 개요 박스 출력
+            # [UI] 회사 개요 박스
             st.markdown(f"""
             <div class="summary-box" style="line-height: 1.8; text-align: justify; font-size: 15px;">
-                <b style="font-size: 18px; color: #FFAB00;">🏢 {selected} 기업 개요</b> <span style="font-size: 12px; color: gray;">(AI 자동 번역 & 정리)</span><br><br>
+                <b style="font-size: 18px; color: #FFAB00;">🏢 {selected} 기업 개요</b> <span style="font-size: 12px; color: gray;">{source_label}</span><br><br>
                 {summary_text}
             </div>
             """, unsafe_allow_html=True)
