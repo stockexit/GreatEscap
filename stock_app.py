@@ -336,7 +336,7 @@ if df_sheet is not None:
                     with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
                     with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
                     # 최신 EPS 성장률은 아이콘 없이 텍스트로만 깔끔하게 표시
-                    with c_t3: st.metric("최신 EPS 성장률", f"{latest_vs_10y_rate:+.1f}%")
+                    with c_t3: st.metric("최신 EPS 성장률", "", delta=f"{latest_vs_10y_rate:+.1f}%")
                     
                     st.write("") 
 
