@@ -265,7 +265,7 @@ if df_sheet is not None:
             grade = s_info.get('투자등급', '미분류') 
             badge_color = {"코어": "#2962FF", "위성": "#FFAB00", "시가존": "#2E7D32"}.get(grade, "#616161")
             badge_icon = {"코어": "💎", "위성": "🛰️", "시가존": "🚬"}.get(grade, "❔")
-            badge_text = {"코어": "CORE", "위성": "SATELLITE", "시가존": "시가존"}.get(grade, "미지정")
+            badge_text = {"코어": "코어(주력유력)", "위성": "위성(주력후보)", "시가존": "시가존(분할매수)"}.get(grade, "미지정")
         except:
             current_p = 0; gap_min=gap_max=gap_buy=cagr_min=cagr_max=0
 
