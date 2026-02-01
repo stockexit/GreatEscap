@@ -126,12 +126,12 @@ def fetch_shares_history(ticker_code):
         return df_yearly[['연도', '상장주식수', '시가총액']].reset_index(drop=True)
     except: return pd.DataFrame()
 
-# [연간 데이터] DART 10년
+# [연간 데이터]
 @st.cache_data(show_spinner=False) 
 def fetch_core_financials(api_key, ticker_code):
     try: dart = OpenDartReader(api_key)
     except Exception as e: return None, None, f"API 키 오류: {e}"
-    if len(str(ticker_code)) != 6: return None, None, "DART 조회 불가"
+    if len(str(ticker_code)) != 6: return None, None, "조회 불가"
     now_year = datetime.datetime.now().year 
     years = range(now_year, now_year - 12, -1) 
     result_data = []
@@ -184,26 +184,21 @@ def fetch_core_financials(api_key, ticker_code):
         else: return None, None, "데이터 없음"
     except Exception as e: return None, None, f"오류: {e}"
 
-# [분기 데이터] DART 정밀 계산 (3년치)
-# 1Q = 1분기, 2Q = 반기누적-1분기, 3Q = 3분기누적-반기누적, 4Q = 사업보고서-3분기누적
+# [분기 데이터] 정밀 계산
 @st.cache_data(show_spinner=False)
 def fetch_quarterly_dart_calc(api_key, ticker_code):
     try:
         dart = OpenDartReader(api_key)
         now_year = datetime.datetime.now().year
-        # 최근 3년 (너무 길면 타임아웃 발생)
+        # 최근 3년
         years = range(now_year, now_year - 4, -1) 
         
         quarter_data = []
-        
-        # 반복문 진행바
         progress_bar = st.progress(0)
         total_steps = len(years) * 4
         current_step = 0
 
         for year in years:
-            # 해당 연도의 모든 보고서 데이터 수집 (1Q, Half, 3Q, Annual)
-            # 11013: 1분기, 11012: 반기, 11014: 3분기, 11011: 사업보고서
             reports = {}
             for code in ['11013', '11012', '11014', '11011']:
                 current_step += 1
@@ -211,19 +206,12 @@ def fetch_quarterly_dart_calc(api_key, ticker_code):
                 try:
                     df = dart.finstate(ticker_code, year, reprt_code=code)
                     if df is not None and not df.empty:
-                        # 연결(CFS) 우선, 없으면 별도(OFS)
                         df['account_nm'] = df['account_nm'].astype(str).str.strip()
-                        
                         def get_val(nm_list):
-                            # CFS 우선
                             temp = df[(df['fs_div']=='CFS') & (df['account_nm'].isin(nm_list))]
                             if temp.empty:
                                 temp = df[(df['fs_div']=='OFS') & (df['account_nm'].isin(nm_list))]
                             if temp.empty: return 0
-                            # thstrm_amount(당기)를 가져옴. 
-                            # 주의: 반기/3분기/사업보고서의 thstrm_amount는 '누적'일 수도 '3개월'일 수도 있음.
-                            # 보통 DART API finstate는 '누적' 값을 주는 경우가 많음 (특히 포괄손익계산서).
-                            # 정확한 계산을 위해 누적치를 가져와서 뺌.
                             try:
                                 val = temp.iloc[0]['thstrm_amount']
                                 return float(str(val).replace(',', ''))
@@ -232,34 +220,25 @@ def fetch_quarterly_dart_calc(api_key, ticker_code):
                         sales = get_val(['매출액', '수익(매출액)', '영업수익'])
                         op = get_val(['영업이익', '영업이익(손실)'])
                         net = get_val(['당기순이익', '당기순이익(손실)', '분기순이익', '분기순이익(손실)', '반기순이익', '반기순이익(손실)'])
-                        
                         reports[code] = {'sales': sales, 'op': op, 'net': net}
-                    time.sleep(0.05) # 차단 방지
+                    time.sleep(0.05) 
                 except: pass
             
-            # 분기별 분리 계산
-            # 1Q = 11013
             if '11013' in reports:
                 q1 = reports['11013']
                 quarter_data.append({'분기': f"{year}.1Q", '매출액(억)': q1['sales'], '영업이익(억)': q1['op'], '순이익(억)': q1['net']})
-                
-                # 2Q = 11012 - 11013
                 if '11012' in reports:
                     acc_half = reports['11012']
                     q2_sales = acc_half['sales'] - q1['sales']
                     q2_op = acc_half['op'] - q1['op']
                     q2_net = acc_half['net'] - q1['net']
                     quarter_data.append({'분기': f"{year}.2Q", '매출액(억)': q2_sales, '영업이익(억)': q2_op, '순이익(억)': q2_net})
-                    
-                    # 3Q = 11014 - 11012
                     if '11014' in reports:
                         acc_3q = reports['11014']
                         q3_sales = acc_3q['sales'] - acc_half['sales']
                         q3_op = acc_3q['op'] - acc_half['op']
                         q3_net = acc_3q['net'] - acc_half['net']
                         quarter_data.append({'분기': f"{year}.3Q", '매출액(억)': q3_sales, '영업이익(억)': q3_op, '순이익(억)': q3_net})
-                        
-                        # 4Q = 11011 - 11014
                         if '11011' in reports:
                             acc_year = reports['11011']
                             q4_sales = acc_year['sales'] - acc_3q['sales']
@@ -272,7 +251,6 @@ def fetch_quarterly_dart_calc(api_key, ticker_code):
         if not quarter_data: return None
         
         df_res = pd.DataFrame(quarter_data)
-        # 억 단위 변환
         for col in ['매출액(억)', '영업이익(억)', '순이익(억)']:
             df_res[col] = (df_res[col] / 100000000).round(0)
             
@@ -421,13 +399,13 @@ if menu == "📊 개별 종목 분석":
                         naver_text = fetch_naver_summary(dart_code)
                         if naver_text:
                             raw_text = naver_text
-                            source_label = "(네이버 금융)"
+                            source_label = "(출처: 네이버 금융)"
                         else:
                             raw_text = ticker_obj.info.get('longBusinessSummary', '')
-                            if raw_text: source_label = "(Yahoo - 번역)"
+                            if raw_text: source_label = ""
                     else:
                         raw_text = ticker_obj.info.get('longBusinessSummary', '')
-                        source_label = "(Yahoo - 번역)"
+                        source_label = ""
 
                     if raw_text:
                         is_english = not re.search('[가-힣]', raw_text[:20]) 
@@ -514,12 +492,14 @@ if menu == "📊 개별 종목 분석":
                     if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
 
             with tab2:
+                # -------------------------------------------------------------
+                # [데이터 준비] 연간 데이터 미리 가져오기
+                # -------------------------------------------------------------
                 if not is_korea:
                     st.info("미국 주식은 지원하지 않습니다.")
                 else:
                     DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
-                    with st.spinner(f"연간 데이터 미리 계산 중... ({selected})"):
-                        display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
+                    display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
                     
                     if display_df is not None:
                         raw_data = raw_data.sort_values('연도')
@@ -548,6 +528,7 @@ if menu == "📊 개별 종목 분석":
                             
                         cagr_max_str = calculate_cagr(df_max); cagr_5_str = calculate_cagr(df_5)
 
+                        # [지표 영역]
                         c_t1, c_t2, c_t3 = st.columns(3)
                         with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
                         with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
@@ -560,8 +541,8 @@ if menu == "📊 개별 종목 분석":
                         
                         st.write("---")
 
-                        # [핵심] 보기 선택 버튼 (표 바로 위)
-                        view_option = st.radio("조회 기준", ["📊 연간 실적 (10년)", "📆 분기 실적 (최근 3년, DART)"], horizontal=True, label_visibility="collapsed")
+                        # [핵심] 보기 선택 버튼 (토글)
+                        view_option = st.radio("조회 기준", ["📊 연간 실적 (10년)", "📆 분기 실적 (최근 3년)"], horizontal=True, label_visibility="collapsed")
                         st.write("")
 
                         if "연간" in view_option:
@@ -578,11 +559,10 @@ if menu == "📊 개별 종목 분석":
                             st.plotly_chart(fig, use_container_width=True)
                         
                         else: # 분기 선택 시 (DART)
-                            with st.spinner("DART에서 분기 데이터를 정밀 계산 중입니다... (최근 3년, 약 5-10초 소요)"):
+                            with st.spinner("분기 데이터 분석 중... (최근 3년)"):
                                 df_quarter = fetch_quarterly_dart_calc(DART_API_KEY, dart_code)
                             
                             if df_quarter is not None:
-                                st.caption("※ DART 보고서를 기반으로 누적치에서 차감 계산한 '순수 분기' 실적입니다.")
                                 st.dataframe(df_quarter.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
                                 
                                 fig_q = go.Figure()
@@ -591,7 +571,7 @@ if menu == "📊 개별 종목 분석":
                                 fig_q.update_layout(title="최근 분기 실적 추이", template="plotly_dark", barmode='group', height=400)
                                 st.plotly_chart(fig_q, use_container_width=True)
                             else:
-                                st.warning("분기 데이터를 불러올 수 없습니다. (DART 응답 지연 등)")
+                                st.warning("분기 데이터를 불러올 수 없습니다.")
 
                     else: st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
 
