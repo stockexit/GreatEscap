@@ -4,7 +4,7 @@ import pandas as pd
 
 # 1. 페이지 설정
 st.set_page_config(layout="wide", page_title="Stockexit Master View")
-st.title("📊 Stockexit: 마스터 재무 분석 (Final Fixed)")
+st.title("📊 Stockexit: 마스터 재무 분석 (복구 및 안정화)")
 
 # 2. 사이드바 설정
 st.sidebar.header("🔍 분석 설정")
@@ -35,7 +35,7 @@ except:
     df['fs_div'] = 'CFS' 
 conn.close()
 
-# 4. 데이터 전처리 (핵심 로직)
+# 4. 데이터 전처리
 # (1) 연결(CFS) 우선 필터링
 if df['fs_div'].str.contains('CFS', case=False, na=False).any():
     df = df[df['fs_div'].str.contains('CFS', case=False, na=False)]
@@ -43,7 +43,7 @@ if df['fs_div'].str.contains('CFS', case=False, na=False).any():
 else:
     st.sidebar.warning("⚠️ 연결 데이터 없음 (별도 기준)")
 
-# (2) 이름 공백 제거 & 쉼표 제거 (숫자 변환)
+# (2) 이름 및 숫자 정리 (공백/쉼표 제거)
 df['clean_name'] = df['account_nm'].str.replace(" ", "").str.strip()
 df['amount'] = (
     df['thstrm_amount']
@@ -52,22 +52,24 @@ df['amount'] = (
     .pipe(pd.to_numeric, errors='coerce')
 ) / unit_div
 
-# 5. 매핑 리스트 (자본총계, 지배주주순이익 위치 교정 완료)
+# 5. ⭐️ 매핑 리스트 (누락된 항목들 모두 포함) ⭐️
 mapping_config = {
-    # [손익계산서]
+    # [손익계산서] - Flow (번 돈)
     '매출액': ['매출액', '수익(매출액)', '영업수익', '수익'],
     '매출원가': ['매출원가', '영업원가', '매출의원가'],
     '매출총이익': ['매출총이익'],
     '판관비': ['판매비와관리비', '판관비'],
     '영업이익': ['영업이익', '영업이익(손실)'],
     '당기순이익': ['당기순이익', '당기순이익(손실)', '분기순이익', '분기순이익(손실)', '연결분기순이익', '연결당기순이익'],
-    '지배주주순이익': ['지배주주지분순이익', '지배기업소유주지분순이익'], # 순이익만 매핑
-
-    # [재무상태표]
+    
+    # [재무상태표] - Stock (쌓인 돈)
     '자산총계': ['자산총계', '자산'],
     '부채총계': ['부채총계', '부채'],
-    # '지배기업소유주지분'은 자본(누적된 돈)이므로 여기로 이동!
-    '자본총계': ['자본총계', '자본', '기말자본', '반기말자본', '분기말자본', '지배기업소유주지분', '지배기업의소유주에게귀속되는지분'], 
+    '자본총계': ['자본총계', '자본', '기말자본', '반기말자본', '분기말자본'], 
+    
+    # 🚨 아까 사라졌던 항목들 여기(재무상태표)에 확실히 매핑합니다 🚨
+    '지배주주지분': ['지배기업소유주지분', '지배기업의소유주에게귀속되는지분', '지배주주지분'], 
+    '비지배지분': ['비지배지분', '비지배주주지분'],
 
     # [현금흐름표]
     '영업활동현금': ['영업활동현금흐름', '영업활동으로인한현금흐름'],
@@ -82,7 +84,7 @@ for std, aliases in mapping_config.items():
     for alias in aliases:
         reverse_map[alias] = std
 
-# 6. 출력 함수 (높이 자동 조절 로직 강화 ⚡️)
+# 6. 출력 함수 (None -> 0 처리 강화)
 def show_table(target_items, tab_name):
     temp = df.copy()
     temp['standard_name'] = temp['clean_name'].map(reverse_map)
@@ -93,34 +95,35 @@ def show_table(target_items, tab_name):
         index='standard_name', columns=['bsns_year', 'quarter'], values='amount', aggfunc='first'
     )
     
-    # 정렬
+    # ⭐️ 1. 강제 순서 맞추기 (없어도 행을 만듦)
     pivot = pivot.reindex(target_items)
+    
+    # ⭐️ 2. None 값을 0으로 채우기 (개판 방지)
+    pivot = pivot.fillna(0)
+    
+    # 3. 최신순 정렬
     pivot = pivot.sort_index(axis=1, ascending=False)
     
-    if pivot.empty:
-        st.info(f"데이터가 없습니다. ({tab_name})")
+    # 4. 높이 자동 조절 (스크롤 방지)
+    h = (len(target_items) + 1) * 35 + 3
+    
+    if pivot.empty: # 데이터가 아예 없어도 틀은 보여줌
+         st.dataframe(pd.DataFrame(index=target_items), use_container_width=True)
     else:
-        # ⚡️ 여기가 핵심입니다: 행 개수에 맞춰 높이를 픽셀 단위로 강제 지정 ⚡️
-        # (행 개수 + 헤더 1줄) * 35픽셀 + 3픽셀 여유
-        dynamic_height = (len(pivot) + 1) * 35 + 3
-        
-        st.dataframe(
-            pivot.style.format(f"{{:,.1f}} {unit_option}"), 
-            use_container_width=True, 
-            height=dynamic_height  # 이 옵션이 있어야 쫙 펼쳐집니다!
-        )
+        st.dataframe(pivot.style.format(f"{{:,.1f}} {unit_option}"), use_container_width=True, height=h)
 
 # 7. 탭 구성
 tab1, tab2, tab3 = st.tabs(["손익계산서", "재무상태표", "현금흐름표"])
 
 with tab1:
     st.markdown("#### 📋 손익계산서")
-    items = ['매출액', '매출원가', '매출총이익', '판관비', '영업이익', '당기순이익', '지배주주순이익']
+    items = ['매출액', '매출원가', '매출총이익', '판관비', '영업이익', '당기순이익']
     show_table(items, "손익계산서")
 
 with tab2:
     st.markdown("#### 🏛️ 재무상태표")
-    items = ['자산총계', '부채총계', '자본총계']
+    # 🚨 여기에 '지배주주지분', '비지배지분'을 추가했습니다. 이제 보일 겁니다.
+    items = ['자산총계', '부채총계', '자본총계', '지배주주지분', '비지배지분']
     show_table(items, "재무상태표")
 
 with tab3:
