@@ -448,7 +448,7 @@ if menu == "📊 개별 종목 분석":
                 port_badge_html = ""
 
             st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
-            tab1, tab2 = st.tabs(["🚀 종목 대시보드", "💎 가치분석 (매출/영업/EPS)"])
+            tab1, tab2 = st.tabs(["종목 대시보드", "재무분석"])
 
             with tab1:
                 c1, c2, c3, c4 = st.columns(4)
