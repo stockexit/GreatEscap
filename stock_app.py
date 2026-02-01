@@ -3,7 +3,7 @@ import streamlit.components.v1 as components
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from plotly.subplots import make_subplots # 이중축 차트를 위해 필요
 import ssl
 import OpenDartReader
 import time
@@ -167,7 +167,7 @@ def fetch_core_financials(api_key, ticker_code):
     except Exception as e: return None, None, f"오류: {e}"
 
 # =========================================================
-# 5. 차트 함수 & 시장 지표 함수
+# 5. 차트 함수 & 시장 지표 함수 (핵심 추가 기능)
 # =========================================================
 def draw_chart(ticker, period, title, unit, current_price=None, target_min=None, target_max=None, target_buy=None):
     try:
@@ -192,47 +192,30 @@ def draw_chart(ticker, period, title, unit, current_price=None, target_min=None,
         return st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False, 'scrollZoom': False})
     except Exception as e: return st.write(f"차트 에러: {e}")
 
-@st.cache_data(ttl=3600)
-def fetch_market_index(ticker, name):
-    """지수 데이터 가져오기 (1년치)"""
-    try:
-        now = datetime.datetime.now()
-        start = (now - datetime.timedelta(days=365)).strftime("%Y%m%d")
-        end = now.strftime("%Y%m%d")
-        # KOSPI=1001, KOSDAQ=2001 (pykrx 기준)
-        if ticker == "KOSPI": code = "1001"
-        elif ticker == "KOSDAQ": code = "2001"
-        else: return pd.DataFrame()
-        
-        df = stock.get_index_ohlcv_by_date(start, end, code)
-        return df
-    except: return pd.DataFrame()
-
-@st.cache_data(ttl=3600)
-def fetch_adr_data(market_code, days=20):
+@st.cache_data(ttl=3600 * 4) # 4시간 캐싱
+def fetch_market_data_with_adr(market_code, days=60):
     """
-    ADR (등락비율) 계산: 최근 N일간 (상승종목수 / 하락종목수) * 100
-    * 서버 부하를 줄이기 위해 최근 20일치만 계산
+    지수 데이터 및 ADR(등락비율) 계산 함수
+    - market_code: KOSPI="1001", KOSDAQ="2001"
+    - days: 최근 N일 데이터 계산 (서버 부하 고려 60일 권장)
     """
     try:
         now = datetime.datetime.now()
-        # 넉넉하게 40일 전부터 가져와서 영업일 기준 20일 확보
-        start_date = (now - datetime.timedelta(days=40)).strftime("%Y%m%d")
         end_date = now.strftime("%Y%m%d")
-        
-        # 일자별 등락 종목 수 가져오기 (pykrx 기능 활용)
-        # get_index_status_by_date 같은 API가 없으므로, 매일매일의 등락을 조회해야 함 -> 속도 이슈
-        # 대안: 등락비율(ADR)은 API로 직접 제공되지 않음.
-        # Streamlit Cloud 성능상 실시간 루프는 위험하므로, 최근 5일치 '상승/하락' 종목수만 샘플링하여 보여줌
-        
-        results = []
-        # 최근 영업일 날짜 리스트 가져오기
+        start_date_idx = (now - datetime.timedelta(days=days+20)).strftime("%Y%m%d") # 지수용 넉넉히
+
+        # 1. 지수 데이터 가져오기
+        df_index = stock.get_index_ohlcv_by_date(start_date_idx, end_date, market_code)
+        df_index = df_index[['종가']].rename(columns={'종가': 'Index'})
+
+        # 2. ADR 계산 (일자별 상승/하락 종목 수 카운트)
+        market_tick = "KOSPI" if market_code == "1001" else "KOSDAQ"
         dates = stock.get_previous_business_days(end_date=end_date, count=days)
         
-        for date_str in dates:
-            # 해당 날짜의 전체 종목 등락 조회 (시간 소요됨)
-            # KOSPI=0, KOSDAQ=1 (API 파라미터 확인 필요) -> pykrx get_market_ohlcv_by_ticker 사용시 market="KOSPI"
-            market_tick = "KOSPI" if market_code == "1001" else "KOSDAQ"
+        adr_results = []
+        progress_bar = st.progress(0)
+        for i, date_str in enumerate(dates):
+            # 해당 날짜의 전 종목 등락 정보 가져오기
             df_day = stock.get_market_ohlcv_by_ticker(date_str, market=market_tick)
             
             up_count = len(df_day[df_day['등락률'] > 0])
@@ -241,18 +224,59 @@ def fetch_adr_data(market_code, days=20):
             if down_count > 0:
                 adr = (up_count / down_count) * 100
             else:
-                adr = 100
+                adr = 100 # 하락 종목이 없는 경우 (극히 드묾)
+                
+            adr_results.append({"Date": pd.to_datetime(date_str), "ADR": adr})
+            progress_bar.progress((i + 1) / len(dates)) # 진행률 표시
+            time.sleep(0.1) # API 차단 방지용 딜레이
             
-            results.append({"Date": pd.to_datetime(date_str), "ADR": adr, "Up": up_count, "Down": down_count})
-            time.sleep(0.1) # 차단 방지
-            
-        df_adr = pd.DataFrame(results).sort_values('Date')
-        return df_adr
+        progress_bar.empty()
+        df_adr = pd.DataFrame(adr_results).set_index('Date').sort_index()
+        
+        # 3. 지수와 ADR 데이터 병합
+        df_final = pd.merge(df_index, df_adr, left_index=True, right_index=True, how='inner')
+        return df_final
+        
     except Exception as e:
+        st.error(f"시장 데이터 계산 중 오류: {e}")
         return pd.DataFrame()
 
+def draw_market_chart(df, title):
+    """지수(왼쪽축) + ADR(오른쪽축) 이중축 차트 그리기"""
+    if df.empty: return st.warning("데이터가 없습니다.")
+    
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    # 왼쪽 Y축: 지수 (파란색 선)
+    fig.add_trace(
+        go.Scatter(x=df.index, y=df['Index'], name=title.split(' ')[0], line=dict(color='#2962FF', width=2)),
+        secondary_y=False,
+    )
+
+    # 오른쪽 Y축: ADR (빨간색 선)
+    fig.add_trace(
+        go.Scatter(x=df.index, y=df['ADR'], name='ADR(등락비율)', line=dict(color='#FF3D00', width=2)),
+        secondary_y=True,
+    )
+
+    # 과열/침체 기준선 추가
+    fig.add_hline(y=100, line_dash="dash", line_color="gray", opacity=0.5, secondary_y=True)
+    fig.add_hline(y=80, line_dash="dot", line_color="#00C853", opacity=0.7, annotation_text="침체 (80)", annotation_position="bottom right", secondary_y=True)
+    fig.add_hline(y=120, line_dash="dot", line_color="#D500F9", opacity=0.7, annotation_text="과열 (120)", annotation_position="top right", secondary_y=True)
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=20)),
+        height=500,
+        template="plotly_dark",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis=dict(title=f"{title.split(' ')[0]} 지수", showgrid=False),
+        yaxis2=dict(title="ADR (%)", showgrid=True, gridcolor='rgba(255,255,255,0.1)', range=[60, 140]) # ADR 범위 고정
+    )
+    return st.plotly_chart(fig, use_container_width=True)
+
 # =========================================================
-# 6. 메인 앱 로직
+# 6. 메인 앱 로직 (메뉴 구조 적용)
 # =========================================================
 df_sheet = load_data()
 
@@ -469,9 +493,7 @@ if menu == "📊 개별 종목 분석":
 # =========================================================
 elif menu == "🌍 시장 대시보드 (Beta)":
     st.title("🌍 KOREA Market Dashboard")
-    st.info("💡 ADR과 지수 추세를 통해 시장의 과열/침체를 판단합니다. (최근 1년 데이터)")
-    
-    m_tab1, m_tab2 = st.tabs(["KOSPI (코스피)", "KOSDAQ (코스닥)"])
+    st.info("💡 지수(파란색, 왼쪽축)와 ADR(빨간색, 오른쪽축)을 함께 보며 시장의 과열/침체를 판단합니다.")
     
     # 1. 환율 정보 (공통)
     try:
@@ -479,52 +501,26 @@ elif menu == "🌍 시장 대시보드 (Beta)":
         st.sidebar.markdown(f"### 💵 원/달러 환율: {usd_krw:,.2f}원")
     except: pass
 
+    m_tab1, m_tab2 = st.tabs(["KOSPI (코스피)", "KOSDAQ (코스닥)"])
+    
     # 2. KOSPI 탭
     with m_tab1:
-        with st.spinner("KOSPI 데이터 분석 중..."):
-            df_kospi = fetch_market_index("KOSPI", "코스피")
-            # ADR은 시간이 걸리므로 최근 20일만 계산
-            df_adr_kospi = fetch_adr_data("1001", days=20)
-
-        if not df_kospi.empty:
-            # 캔들 차트
-            fig = go.Figure(data=[go.Candlestick(x=df_kospi.index, open=df_kospi['시가'], high=df_kospi['고가'], low=df_kospi['저가'], close=df_kospi['종가'], name='KOSPI')])
-            fig.update_layout(title="KOSPI 지수 (1년)", height=400, template="plotly_dark", xaxis_rangeslider_visible=False)
-            st.plotly_chart(fig, use_container_width=True)
-        
-        if not df_adr_kospi.empty:
-            curr_adr = df_adr_kospi['ADR'].iloc[-1]
-            st.metric("KOSPI 등락비율 (ADR)", f"{curr_adr:.1f}%", delta=f"{curr_adr-100:.1f}")
-            st.caption("ADR 80% 이하: 과매도(침체) / 120% 이상: 과매수(과열)")
+        with st.spinner("KOSPI 시장 데이터 분석 중... (최근 60일)"):
+            # KOSPI 코드: 1001
+            df_kospi_combo = fetch_market_data_with_adr("1001", days=60)
             
-            fig_adr = go.Figure()
-            fig_adr.add_trace(go.Scatter(x=df_adr_kospi['Date'], y=df_adr_kospi['ADR'], mode='lines+markers', name='ADR', line=dict(color='#00E676')))
-            fig_adr.add_hline(y=100, line_dash="dash", line_color="white")
-            fig_adr.add_hline(y=80, line_dash="dot", line_color="red", annotation_text="침체권 (80)")
-            fig_adr.add_hline(y=120, line_dash="dot", line_color="red", annotation_text="과열권 (120)")
-            fig_adr.update_layout(title="최근 20일 KOSPI ADR 추이", height=300, template="plotly_dark")
-            st.plotly_chart(fig_adr, use_container_width=True)
+        if not df_kospi_combo.empty:
+            curr_adr = df_kospi_combo['ADR'].iloc[-1]
+            st.metric("현재 KOSPI ADR", f"{curr_adr:.1f}%", delta=f"{curr_adr-100:.1f}", help="100% 기준, 80% 이하 침체, 120% 이상 과열")
+            draw_market_chart(df_kospi_combo, "ADR - KOSPI")
 
     # 3. KOSDAQ 탭
     with m_tab2:
-        with st.spinner("KOSDAQ 데이터 분석 중..."):
-            df_kosdaq = fetch_market_index("KOSDAQ", "코스닥")
-            df_adr_kosdaq = fetch_adr_data("2001", days=20)
-
-        if not df_kosdaq.empty:
-            fig = go.Figure(data=[go.Candlestick(x=df_kosdaq.index, open=df_kosdaq['시가'], high=df_kosdaq['고가'], low=df_kosdaq['저가'], close=df_kosdaq['종가'], name='KOSDAQ')])
-            fig.update_layout(title="KOSDAQ 지수 (1년)", height=400, template="plotly_dark", xaxis_rangeslider_visible=False)
-            st.plotly_chart(fig, use_container_width=True)
+        with st.spinner("KOSDAQ 시장 데이터 분석 중... (최근 60일)"):
+            # KOSDAQ 코드: 2001
+            df_kosdaq_combo = fetch_market_data_with_adr("2001", days=60)
             
-        if not df_adr_kosdaq.empty:
-            curr_adr = df_adr_kosdaq['ADR'].iloc[-1]
-            st.metric("KOSDAQ 등락비율 (ADR)", f"{curr_adr:.1f}%", delta=f"{curr_adr-100:.1f}")
-            st.caption("ADR 80% 이하: 과매도(침체) / 120% 이상: 과매수(과열)")
-            
-            fig_adr = go.Figure()
-            fig_adr.add_trace(go.Scatter(x=df_adr_kosdaq['Date'], y=df_adr_kosdaq['ADR'], mode='lines+markers', name='ADR', line=dict(color='#2962FF')))
-            fig_adr.add_hline(y=100, line_dash="dash", line_color="white")
-            fig_adr.add_hline(y=80, line_dash="dot", line_color="red", annotation_text="침체권 (80)")
-            fig_adr.add_hline(y=120, line_dash="dot", line_color="red", annotation_text="과열권 (120)")
-            fig_adr.update_layout(title="최근 20일 KOSDAQ ADR 추이", height=300, template="plotly_dark")
-            st.plotly_chart(fig_adr, use_container_width=True)
+        if not df_kosdaq_combo.empty:
+            curr_adr = df_kosdaq_combo['ADR'].iloc[-1]
+            st.metric("현재 KOSDAQ ADR", f"{curr_adr:.1f}%", delta=f"{curr_adr-100:.1f}", help="100% 기준, 80% 이하 침체, 120% 이상 과열")
+            draw_market_chart(df_kosdaq_combo, "ADR - KOSDAQ")
