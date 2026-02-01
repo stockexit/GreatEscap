@@ -3,7 +3,7 @@ import streamlit.components.v1 as components
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots # 이중축 차트를 위해 필요
+from plotly.subplots import make_subplots 
 import ssl
 import OpenDartReader
 import time
@@ -166,6 +166,50 @@ def fetch_core_financials(api_key, ticker_code):
         else: return None, None, "데이터 없음"
     except Exception as e: return None, None, f"오류: {e}"
 
+# [추가됨] 분기 데이터 가져오기 (yfinance 활용)
+@st.cache_data(show_spinner=False)
+def fetch_quarterly_data(yf_code):
+    try:
+        ticker = yf.Ticker(yf_code)
+        # 분기 재무제표 (최근 4~5분기 제공됨)
+        q_financials = ticker.quarterly_income_stmt.T
+        if q_financials.empty: return None
+        
+        # 필요한 항목 추출 및 한국어 변환
+        q_financials = q_financials.reset_index()
+        q_financials.rename(columns={'index': 'Date'}, inplace=True)
+        q_financials['Date'] = q_financials['Date'].dt.strftime('%Y-%m') # 날짜 포맷
+        
+        # 주요 컬럼 찾기 (Total Revenue, Operating Income, Net Income)
+        # yfinance 컬럼명은 변동될 수 있어 안전하게 처리
+        cols_map = {
+            'Total Revenue': '매출액(억)',
+            'Operating Income': '영업이익(억)', 
+            'Net Income': '순이익(억)'
+        }
+        
+        final_data = []
+        for _, row in q_financials.iterrows():
+            data = {'분기': row['Date']}
+            for eng, kor in cols_map.items():
+                if eng in row:
+                    # 억 단위 변환
+                    val = row[eng]
+                    if pd.notna(val):
+                        data[kor] = round(val / 100000000, 0)
+                    else:
+                        data[kor] = 0
+            final_data.append(data)
+            
+        df_q = pd.DataFrame(final_data)
+        if df_q.empty: return None
+        
+        # 최신순 정렬
+        df_q = df_q.sort_values('분기', ascending=False)
+        return df_q
+    except:
+        return None
+
 # =========================================================
 # 5. 차트 함수 & 시장 지표 함수
 # =========================================================
@@ -199,85 +243,54 @@ def fetch_market_data_with_adr(market_code, days=60):
         end_date = now.strftime("%Y%m%d")
         start_date_idx = (now - datetime.timedelta(days=days+20)).strftime("%Y%m%d")
 
-        # 1. 지수 데이터 가져오기
         df_index = stock.get_index_ohlcv_by_date(start_date_idx, end_date, market_code)
         if df_index.empty: return pd.DataFrame()
         df_index = df_index[['종가']].rename(columns={'종가': 'Index'})
 
-        # 2. ADR 계산
         market_tick = "KOSPI" if market_code == "1001" else "KOSDAQ"
         dates = stock.get_previous_business_days(end_date=end_date, count=days)
         
         adr_results = []
         progress_bar = st.progress(0)
         
-        if not dates: # 날짜를 못 가져온 경우
+        if not dates: 
              progress_bar.empty()
              return pd.DataFrame()
 
         for i, date_str in enumerate(dates):
             try:
                 df_day = stock.get_market_ohlcv_by_ticker(date_str, market=market_tick)
-                
                 if df_day is not None and not df_day.empty:
                     up_count = len(df_day[df_day['등락률'] > 0])
                     down_count = len(df_day[df_day['등락률'] < 0])
-                    
                     if down_count > 0: adr = (up_count / down_count) * 100
                     else: adr = 100
-                        
                     adr_results.append({"Date": pd.to_datetime(date_str), "ADR": adr})
             except: pass 
-            
             progress_bar.progress((i + 1) / len(dates))
             time.sleep(0.05) 
             
         progress_bar.empty()
         
-        if not adr_results:
-            return pd.DataFrame()
-
+        if not adr_results: return pd.DataFrame()
         df_adr = pd.DataFrame(adr_results)
-        if 'Date' not in df_adr.columns:
-            return pd.DataFrame()
-            
+        if 'Date' not in df_adr.columns: return pd.DataFrame()
         df_adr = df_adr.set_index('Date').sort_index()
         
-        # 3. 병합
         df_final = pd.merge(df_index, df_adr, left_index=True, right_index=True, how='inner')
         return df_final
-        
     except Exception as e:
         return pd.DataFrame()
 
 def draw_market_chart(df, title):
-    if df.empty: return st.warning("데이터를 불러오지 못했습니다. (서버/통신 에러)")
-    
+    if df.empty: return st.warning("데이터를 불러오지 못했습니다.")
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-    fig.add_trace(
-        go.Scatter(x=df.index, y=df['Index'], name=title.split(' ')[0], line=dict(color='#2962FF', width=2)),
-        secondary_y=False,
-    )
-
-    fig.add_trace(
-        go.Scatter(x=df.index, y=df['ADR'], name='ADR(등락비율)', line=dict(color='#FF3D00', width=2)),
-        secondary_y=True,
-    )
-
+    fig.add_trace(go.Scatter(x=df.index, y=df['Index'], name=title.split(' ')[0], line=dict(color='#2962FF', width=2)), secondary_y=False)
+    fig.add_trace(go.Scatter(x=df.index, y=df['ADR'], name='ADR(등락비율)', line=dict(color='#FF3D00', width=2)), secondary_y=True)
     fig.add_hline(y=100, line_dash="dash", line_color="gray", opacity=0.5, secondary_y=True)
     fig.add_hline(y=80, line_dash="dot", line_color="#00C853", opacity=0.7, annotation_text="침체 (80)", annotation_position="bottom right", secondary_y=True)
     fig.add_hline(y=120, line_dash="dot", line_color="#D500F9", opacity=0.7, annotation_text="과열 (120)", annotation_position="top right", secondary_y=True)
-
-    fig.update_layout(
-        title=dict(text=title, font=dict(size=20)),
-        height=500,
-        template="plotly_dark",
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        yaxis=dict(title=f"{title.split(' ')[0]} 지수", showgrid=False),
-        yaxis2=dict(title="ADR (%)", showgrid=True, gridcolor='rgba(255,255,255,0.1)', range=[60, 140]) 
-    )
+    fig.update_layout(title=dict(text=title, font=dict(size=20)), height=500, template="plotly_dark", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), yaxis=dict(title=f"{title.split(' ')[0]} 지수", showgrid=False), yaxis2=dict(title="ADR (%)", showgrid=True, gridcolor='rgba(255,255,255,0.1)', range=[60, 140]))
     return st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 # =========================================================
@@ -429,70 +442,88 @@ if menu == "📊 개별 종목 분석":
                     if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
 
             with tab2:
-                if not is_korea:
-                    st.info("미국 주식은 지원하지 않습니다.")
-                else:
-                    DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
-                    with st.spinner(f"재무 데이터 통합 중... ({selected})"):
-                        display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
-                    
-                    if display_df is not None:
-                        raw_data = raw_data.sort_values('연도')
-                        eps_series = raw_data['EPS(원)']
-                        eps_mean_10 = eps_series.mean()
-                        eps_mean_5 = eps_series.tail(5).mean()
-                        latest_eps = eps_series.iloc[-1]
+                # [수정됨] 연간/분기 탭 분리
+                fin_tab1, fin_tab2 = st.tabs(["📊 연간 실적 (10년)", "📆 분기 실적 (최근 5분기)"])
+                
+                # --- [TAB 1] 연간 실적 (기존 DART 로직) ---
+                with fin_tab1:
+                    if not is_korea:
+                        st.info("미국 주식은 지원하지 않습니다.")
+                    else:
+                        DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
+                        with st.spinner(f"연간 재무 데이터 분석 중... ({selected})"):
+                            display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
+                        
+                        if display_df is not None:
+                            raw_data = raw_data.sort_values('연도')
+                            eps_series = raw_data['EPS(원)']
+                            eps_mean_10 = eps_series.mean()
+                            eps_mean_5 = eps_series.tail(5).mean()
+                            latest_eps = eps_series.iloc[-1]
 
-                        latest_vs_10y_rate = ((latest_eps - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
-                        momentum_avg = ((eps_mean_5 - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
+                            latest_vs_10y_rate = ((latest_eps - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
+                            momentum_avg = ((eps_mean_5 - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
 
-                        df_max = raw_data
-                        period_max = len(df_max)
-                        label_max = f"{period_max}년 연평균(CAGR)" if period_max < 10 else "10년 연평균(CAGR)"
-                        df_5 = raw_data.tail(5) if len(raw_data) >= 5 else raw_data
+                            df_max = raw_data
+                            period_max = len(df_max)
+                            label_max = f"{period_max}년 연평균(CAGR)" if period_max < 10 else "10년 연평균(CAGR)"
+                            df_5 = raw_data.tail(5) if len(raw_data) >= 5 else raw_data
 
-                        def calculate_cagr(df):
-                            if len(df) < 2: return "데이터 부족"
-                            start_eps = df['EPS(원)'].iloc[0]; end_eps = df['EPS(원)'].iloc[-1]; years = len(df)-1
-                            
-                            # [핵심 수정] 시작 연도가 적자(0 이하)일 경우, 1원으로 보정하여 성장률 계산 가능하게 함
-                            if start_eps <= 0: 
-                                start_eps = 1 
-                            
-                            # 단, 최근 연도까지 적자라면 성장률 계산 의미 없음
-                            if end_eps <= 0: 
-                                return "적자 지속"
+                            def calculate_cagr(df):
+                                if len(df) < 2: return "데이터 부족"
+                                start_eps = df['EPS(원)'].iloc[0]; end_eps = df['EPS(원)'].iloc[-1]; years = len(df)-1
                                 
-                            try:
-                                cagr = (end_eps / start_eps) ** (1/years) - 1
-                                return f"{cagr*100:+.1f}%"
-                            except: return "계산 오류"
-                            
-                        cagr_max_str = calculate_cagr(df_max); cagr_5_str = calculate_cagr(df_5)
+                                # [핵심 수정] 적자였던 기업이 흑자전환 시 성장률 계산을 위해 1원으로 보정
+                                if start_eps <= 0: start_eps = 1 
+                                if end_eps <= 0: return "적자 지속"
+                                    
+                                try:
+                                    cagr = (end_eps / start_eps) ** (1/years) - 1
+                                    return f"{cagr*100:+.1f}%"
+                                except: return "계산 오류"
+                                
+                            cagr_max_str = calculate_cagr(df_max); cagr_5_str = calculate_cagr(df_5)
 
-                        c_t1, c_t2, c_t3 = st.columns(3)
-                        with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
-                        with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
-                        with c_t3: st.metric("최신 EPS 성장률", "", delta=f"{latest_vs_10y_rate:+.1f}%")
-                        st.write("") 
-                        c_b1, c_b2, c_b3 = st.columns(3)
-                        with c_b1: st.metric(label_max, cagr_max_str)
-                        with c_b2: st.metric("최근 5년 연평균", cagr_5_str)
-                        with c_b3: st.metric("성장 모멘텀", "", delta=f"{momentum_avg:+.1f}%")
-                        st.write("---")
+                            c_t1, c_t2, c_t3 = st.columns(3)
+                            with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
+                            with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
+                            with c_t3: st.metric("최신 EPS 성장률", "", delta=f"{latest_vs_10y_rate:+.1f}%")
+                            st.write("") 
+                            c_b1, c_b2, c_b3 = st.columns(3)
+                            with c_b1: st.metric(label_max, cagr_max_str)
+                            with c_b2: st.metric("최근 5년 연평균", cagr_5_str)
+                            with c_b3: st.metric("성장 모멘텀", "", delta=f"{momentum_avg:+.1f}%")
+                            st.write("---")
 
-                        st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
-                        fig = make_subplots(specs=[[{"secondary_y": True}]])
-                        fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['매출액(억)'], name='매출액(좌측)', marker_color='#90CAF9', opacity=0.6), secondary_y=False)
-                        fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['영업이익(억)'], name='영업이익(좌측)', marker_color='#2962FF'), secondary_y=False)
-                        fig.add_trace(go.Scatter(x=raw_data['연도'], y=raw_data['EPS(원)'], name='EPS(보정됨)', mode='lines+markers+text', line=dict(color='#00E676', width=3), marker=dict(size=8, color='#00E676', symbol='diamond'), text=raw_data['EPS(원)'].apply(lambda x: f"{x:,.0f}"), textposition="top center", textfont=dict(color="white", size=11)), secondary_y=True)
-                        fig.add_hline(y=eps_mean_10, line_dash="dash", line_color="#FFAB00", line_width=2, secondary_y=True, annotation_text=f"10년평균: {eps_mean_10:,.0f}", annotation_position="top left", annotation_font_color="#FFAB00")
-                        fig.add_hline(y=eps_mean_5, line_dash="dot", line_color="#D500F9", line_width=2, secondary_y=True, annotation_text=f"5년평균: {eps_mean_5:,.0f}", annotation_position="bottom left", annotation_font_color="#D500F9")
-                        fig.update_layout(title=f"{selected} 실적 성장 추이", template="plotly_dark", barmode='group', height=550, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                        fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
-                        fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
-                        st.plotly_chart(fig, use_container_width=True)
-                    else: st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
+                            st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
+                            fig = make_subplots(specs=[[{"secondary_y": True}]])
+                            fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['매출액(억)'], name='매출액(좌측)', marker_color='#90CAF9', opacity=0.6), secondary_y=False)
+                            fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['영업이익(억)'], name='영업이익(좌측)', marker_color='#2962FF'), secondary_y=False)
+                            fig.add_trace(go.Scatter(x=raw_data['연도'], y=raw_data['EPS(원)'], name='EPS(보정됨)', mode='lines+markers+text', line=dict(color='#00E676', width=3), marker=dict(size=8, color='#00E676', symbol='diamond'), text=raw_data['EPS(원)'].apply(lambda x: f"{x:,.0f}"), textposition="top center", textfont=dict(color="white", size=11)), secondary_y=True)
+                            fig.add_hline(y=eps_mean_10, line_dash="dash", line_color="#FFAB00", line_width=2, secondary_y=True, annotation_text=f"10년평균: {eps_mean_10:,.0f}", annotation_position="top left", annotation_font_color="#FFAB00")
+                            fig.add_hline(y=eps_mean_5, line_dash="dot", line_color="#D500F9", line_width=2, secondary_y=True, annotation_text=f"5년평균: {eps_mean_5:,.0f}", annotation_position="bottom left", annotation_font_color="#D500F9")
+                            fig.update_layout(title=f"{selected} 실적 성장 추이", template="plotly_dark", barmode='group', height=550, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                            fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
+                            fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
+                            st.plotly_chart(fig, use_container_width=True)
+                        else: st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
+
+                # --- [TAB 2] 분기 실적 (yfinance 활용) ---
+                with fin_tab2:
+                    st.caption("※ 분기 데이터는 속도를 위해 야후 파이낸스(yfinance) 데이터를 사용합니다.")
+                    df_quarter = fetch_quarterly_data(yf_code)
+                    if df_quarter is not None:
+                        st.dataframe(df_quarter.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
+                        
+                        # 분기 차트 (매출/영업이익)
+                        fig_q = go.Figure()
+                        fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['매출액(억)'], name='매출액', marker_color='#90CAF9'))
+                        fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['영업이익(억)'], name='영업이익', marker_color='#2962FF'))
+                        fig_q.update_layout(title="최근 분기 실적 추이", template="plotly_dark", barmode='group', height=400)
+                        st.plotly_chart(fig_q, use_container_width=True)
+                    else:
+                        st.warning("분기 데이터를 불러올 수 없습니다.")
+
         else: st.warning("종목 없음")
     else: st.error("데이터 로딩 실패")
 
