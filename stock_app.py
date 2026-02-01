@@ -20,13 +20,30 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# Metric 값과 Delta(성장률 아이콘) 크기를 조절하는 CSS
+# 녹색 배지(Delta)를 강조하고 중복 수치를 숨기는 핵심 CSS
 st.markdown("""
 <style>
     button[data-baseweb="tab"] div p { font-size: 18px !important; font-weight: bold !important; }
     thead tr th { background-color: #f5f6f7 !important; color: #333 !important; font-weight: bold !important; }
+    
+    /* 일반 메트릭 값 크기 */
     div[data-testid="stMetricValue"] { font-size: 26px !important; }
-    div[data-testid="stMetricDelta"] { font-size: 18px !important; } /* 아이콘과 수치 크기 조정 */
+    
+    /* 성장 모멘텀 등 녹색 배지(Delta) 커스텀 */
+    div[data-testid="stMetricDelta"] {
+        font-size: 22px !important; /* 글자 크기 키움 */
+        font-weight: bold !important;
+        background-color: rgba(0, 200, 83, 0.2) !important; /* 연한 녹색 배경 */
+        padding: 5px 15px !important;
+        border-radius: 20px !important; /* 둥근 캡슐 모양 */
+        width: fit-content !important;
+    }
+    
+    /* Delta 화살표 크기 조절 */
+    div[data-testid="stMetricDelta"] svg {
+        width: 20px !important;
+        height: 20px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -314,18 +331,20 @@ if df_sheet is not None:
                         except: return "계산 오류"
                     cagr_max_str = calculate_cagr(df_max); cagr_5_str = calculate_cagr(df_5)
 
-                    # 지표 영역 (타이틀과 구분선 제거)
+                    # 지표 영역
                     c_t1, c_t2, c_t3 = st.columns(3)
                     with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
                     with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
+                    # 최신 EPS 성장률은 아이콘 없이 텍스트로만 깔끔하게 표시
                     with c_t3: st.metric("최신 EPS 성장률", f"{latest_vs_10y_rate:+.1f}%")
                     
-                    st.write("") # 미세한 간격 추가
+                    st.write("") 
 
                     c_b1, c_b2, c_b3 = st.columns(3)
                     with c_b1: st.metric(label_max, cagr_max_str)
                     with c_b2: st.metric("최근 5년 연평균", cagr_5_str)
-                    with c_b3: st.metric("성장 모멘텀", f"{momentum_avg:+.1f}%", delta=f"{momentum_avg:+.1f}%")
+                    # 성장 모멘텀: 수치 중복 제거를 위해 value는 비우고 delta에만 표시 (아이콘 버튼화)
+                    with c_b3: st.metric("성장 모멘텀", "", delta=f"{momentum_avg:+.1f}%")
                     
                     st.write("---")
 
