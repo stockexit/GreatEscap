@@ -18,7 +18,7 @@ from deep_translator import GoogleTranslator
 # 1. 화면 설정 & 스타일
 # =========================================================
 st.set_page_config(
-    page_title="사장님 투자 터미널 (Final)", 
+    page_title="사장님 투자 터미널", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
@@ -48,26 +48,6 @@ st.markdown("""
         font-size: 16px;
         color: #E0E0E0;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-    }
-
-    /* 버튼 스타일링 */
-    div[role="radiogroup"] {
-        background-color: transparent;
-        padding: 5px 0;
-        margin-bottom: 10px;
-    }
-    div[role="radiogroup"] label {
-        background-color: #1e1e1e;
-        border: 1px solid #444;
-        padding: 5px 20px;
-        border-radius: 6px;
-        font-weight: bold;
-        margin-right: 8px;
-    }
-    div[role="radiogroup"] label[data-checked="true"] {
-        background-color: #FF4B4B !important;
-        color: white !important;
-        border-color: #FF4B4B !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -178,86 +158,16 @@ def fetch_core_financials_dart(api_key, ticker_code):
             df_final['순이익(억)'] = (df_final['순이익'] / 100000000).round(0)
             df_final['EPS(원)'] = df_final.apply(lambda r: r['순이익']/r['상장주식수'] if r.get('상장주식수',0)>0 else 0, axis=1).round(0)
             
+            # 시가총액, 멀티플 계산 (데이터 있을 때만)
+            if '시가총액' in df_final.columns:
+                df_final['시가총액(억)'] = (df_final['시가총액'] / 100000000).round(0)
+                df_final['멀티플(배)'] = df_final.apply(lambda r: r['시가총액']/r['영업이익'] if r.get('영업이익',0)>0 else 0, axis=1).round(1)
+
             return df_final, "OK"
         else:
             return None, "No Data"
     except Exception as e:
         return None, str(e)
-
-# [분기 데이터] 네이버 금융 직접 크롤링 (헤더 파싱 문제 해결 및 섹션 분리)
-@st.cache_data(show_spinner=False)
-def fetch_naver_quarterly_fixed(dart_code):
-    try:
-        url = f"https://finance.naver.com/item/main.naver?code={dart_code}"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
-        dfs = pd.read_html(res.text, encoding='cp949')
-        
-        target_df = None
-        # '최근 분기 실적' 섹션이 있는 테이블 찾기
-        for df in dfs:
-            if isinstance(df.columns, pd.MultiIndex):
-                if '최근 분기 실적' in df.columns.get_level_values(0):
-                    # [중요] 연간 실적은 버리고 분기 실적 부분만 선택
-                    target_df = df['최근 분기 실적'].copy()
-                    break
-        
-        if target_df is None: return None
-
-        # 인덱스 설정 (계정명)
-        # 보통 첫 번째 컬럼이 '매출액', '영업이익' 등임
-        if '주요재무정보' in str(target_df.columns[0]):
-             target_df.set_index(target_df.columns[0], inplace=True)
-        else:
-             target_df.set_index(target_df.columns[0], inplace=True)
-
-        row_map = {
-            '매출액': '매출액(억)',
-            '영업이익': '영업이익(억)',
-            '당기순이익': '순이익(억)'
-        }
-        
-        result = []
-        
-        # 컬럼(날짜) 순회
-        for col in target_df.columns:
-            # col은 이제 '2024.09', '2024.12(E)' 같은 문자열임 (MultiIndex가 제거됨)
-            date_clean = str(col).replace('(E)', '').replace('(잠정)', '').strip()
-            
-            # 날짜 형식이 아니면(전년동기 등) 스킵
-            if not re.search(r'\d{4}\.\d{2}', date_clean): continue
-
-            row_data = {'분기': date_clean}
-            
-            for key_keyword, new_key in row_map.items():
-                try:
-                    # 해당 키워드가 포함된 행 찾기
-                    found_rows = target_df.index[target_df.index.str.contains(key_keyword, na=False)]
-                    if len(found_rows) > 0:
-                        # 첫 번째 매칭된 행의 값 가져오기
-                        val = target_df.loc[found_rows[0], col]
-                        
-                        if pd.notna(val) and str(val).strip() != '-':
-                            row_data[new_key] = int(float(str(val).replace(',', '')))
-                        else:
-                            row_data[new_key] = 0
-                    else:
-                        row_data[new_key] = 0
-                except:
-                    row_data[new_key] = 0
-            
-            # 0이 아닌 데이터가 하나라도 있으면 추가
-            if row_data['매출액(억)'] != 0 or row_data['영업이익(억)'] != 0:
-                result.append(row_data)
-            
-        if not result: return None
-        
-        df_final = pd.DataFrame(result)
-        # 최신순 정렬
-        df_final = df_final.sort_values('분기', ascending=False)
-        return df_final
-
-    except Exception as e:
-        return None
 
 # =========================================================
 # 5. 차트 함수 & 시장 지표 함수
@@ -398,7 +308,7 @@ if menu == "📊 개별 종목 분석":
                         naver_text = fetch_naver_summary(dart_code)
                         if naver_text:
                             raw_text = naver_text
-                            source_label = ""
+                            source_label = "(출처: 네이버 금융)"
                         else:
                             raw_text = ticker_obj.info.get('longBusinessSummary', '')
                             source_label = ""
@@ -538,42 +448,24 @@ if menu == "📊 개별 종목 분석":
                         with c_b3: st.metric("성장 모멘텀", "", delta=f"{momentum_avg:+.1f}%")
                         st.write("---")
 
-                        # [버튼] 연간 / 분기
-                        view_option = st.radio("조회 기준", ["연간 실적 (10년)", "분기 실적 (최근 분기)"], horizontal=True, label_visibility="collapsed")
-                        st.write("")
-
-                        if "연간" in view_option:
-                            view_cols = ['연도', '매출액(억)', '영업이익(억)', '순이익(억)', 'EPS(원)']
-                            if '시가총액(억)' in display_df.columns: view_cols.append('시가총액(억)')
-                            if '멀티플(배)' in display_df.columns: view_cols.append('멀티플(배)')
-                            
-                            st.dataframe(display_df[view_cols].set_index('연도').T.style.format("{:,.0f}"), use_container_width=True)
-                            
-                            fig = make_subplots(specs=[[{"secondary_y": True}]])
-                            fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['매출액(억)'], name='매출액(좌측)', marker_color='#90CAF9', opacity=0.6), secondary_y=False)
-                            fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['영업이익(억)'], name='영업이익(좌측)', marker_color='#2962FF'), secondary_y=False)
-                            fig.add_trace(go.Scatter(x=raw_data['연도'], y=raw_data['EPS(원)'], name='EPS', mode='lines+markers+text', line=dict(color='#00E676', width=3), text=raw_data['EPS(원)'].apply(lambda x: f"{x:,.0f}"), textposition="top center"), secondary_y=True)
-                            fig.add_hline(y=eps_mean_10, line_dash="dash", line_color="#FFAB00", line_width=2, secondary_y=True, annotation_text=f"10년평균: {eps_mean_10:,.0f}", annotation_position="top left", annotation_font_color="#FFAB00")
-                            fig.add_hline(y=eps_mean_5, line_dash="dot", line_color="#D500F9", line_width=2, secondary_y=True, annotation_text=f"5년평균: {eps_mean_5:,.0f}", annotation_position="bottom left", annotation_font_color="#D500F9")
-                            fig.update_layout(title=f"{selected} 연간 실적 추이", template="plotly_dark", barmode='group', height=550, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                            fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
-                            fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
-                            st.plotly_chart(fig, use_container_width=True)
+                        st.markdown("### 📊 연간 실적 (10년)")
                         
-                        else: # 분기
-                            with st.spinner("분기 데이터 조회 중... (네이버)"):
-                                df_quarter = fetch_naver_quarterly_fixed(dart_code)
-                            
-                            if df_quarter is not None:
-                                st.dataframe(df_quarter.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
-                                
-                                fig_q = go.Figure()
-                                fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['매출액(억)'], name='매출액', marker_color='#90CAF9'))
-                                fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['영업이익(억)'], name='영업이익', marker_color='#2962FF'))
-                                fig_q.update_layout(title="분기 실적 추이", template="plotly_dark", barmode='group', height=400)
-                                st.plotly_chart(fig_q, use_container_width=True)
-                            else:
-                                st.warning("분기 데이터를 불러올 수 없습니다.")
+                        view_cols = ['연도', '매출액(억)', '영업이익(억)', '순이익(억)', 'EPS(원)']
+                        if '시가총액(억)' in display_df.columns: view_cols.append('시가총액(억)')
+                        if '멀티플(배)' in display_df.columns: view_cols.append('멀티플(배)')
+                        
+                        st.dataframe(display_df[view_cols].set_index('연도').T.style.format("{:,.0f}"), use_container_width=True)
+                        
+                        fig = make_subplots(specs=[[{"secondary_y": True}]])
+                        fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['매출액(억)'], name='매출액(좌측)', marker_color='#90CAF9', opacity=0.6), secondary_y=False)
+                        fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['영업이익(억)'], name='영업이익(좌측)', marker_color='#2962FF'), secondary_y=False)
+                        fig.add_trace(go.Scatter(x=raw_data['연도'], y=raw_data['EPS(원)'], name='EPS', mode='lines+markers+text', line=dict(color='#00E676', width=3), text=raw_data['EPS(원)'].apply(lambda x: f"{x:,.0f}"), textposition="top center"), secondary_y=True)
+                        fig.add_hline(y=eps_mean_10, line_dash="dash", line_color="#FFAB00", line_width=2, secondary_y=True, annotation_text=f"10년평균: {eps_mean_10:,.0f}", annotation_position="top left", annotation_font_color="#FFAB00")
+                        fig.add_hline(y=eps_mean_5, line_dash="dot", line_color="#D500F9", line_width=2, secondary_y=True, annotation_text=f"5년평균: {eps_mean_5:,.0f}", annotation_position="bottom left", annotation_font_color="#D500F9")
+                        fig.update_layout(title=f"{selected} 연간 실적 추이", template="plotly_dark", barmode='group', height=550, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                        fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
+                        fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
+                        st.plotly_chart(fig, use_container_width=True)
 
                     else: st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
 
