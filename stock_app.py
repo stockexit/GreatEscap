@@ -25,16 +25,10 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* 탭 폰트 크기 */
     button[data-baseweb="tab"] div p { font-size: 18px !important; font-weight: bold !important; }
-    
-    /* 테이블 헤더 스타일 */
     thead tr th { background-color: #f5f6f7 !important; color: #333 !important; font-weight: bold !important; }
-    
-    /* 일반 메트릭 값 크기 */
     div[data-testid="stMetricValue"] { font-size: 26px !important; }
     
-    /* 성장 모멘텀 등 녹색 배지(Delta) 커스텀 */
     div[data-testid="stMetricDelta"] {
         font-size: 22px !important;
         font-weight: bold !important;
@@ -45,7 +39,6 @@ st.markdown("""
     }
     div[data-testid="stMetricDelta"] svg { width: 20px !important; height: 20px !important; }
     
-    /* 회사 개요 박스 스타일 */
     .summary-box {
         background-color: #262730;
         padding: 25px;
@@ -57,7 +50,7 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
 
-    /* [핵심] 연간/분기 라디오 버튼을 탭처럼 보이게 스타일링 */
+    /* 버튼 스타일링 */
     div[role="radiogroup"] {
         background-color: #1e1e1e;
         padding: 5px;
@@ -79,7 +72,7 @@ st.markdown("""
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # =========================================================
-# 2. 데이터 로딩 (구글 시트)
+# 2. 데이터 로딩
 # =========================================================
 @st.cache_data(ttl=60)
 def load_data():
@@ -94,7 +87,7 @@ def load_data():
         return None
 
 # =========================================================
-# 3. 크롤링 및 데이터 수집 함수들
+# 3. 데이터 수집 함수들
 # =========================================================
 @st.cache_data(show_spinner=False)
 def fetch_naver_summary(dart_code):
@@ -251,6 +244,7 @@ def fetch_quarterly_dart_calc(api_key, ticker_code):
         if not quarter_data: return None
         
         df_res = pd.DataFrame(quarter_data)
+        # 억 단위 변환
         for col in ['매출액(억)', '영업이익(억)', '순이익(억)']:
             df_res[col] = (df_res[col] / 100000000).round(0)
             
@@ -259,6 +253,35 @@ def fetch_quarterly_dart_calc(api_key, ticker_code):
 
     except Exception as e:
         return None
+
+# [분기 데이터] yfinance 활용
+@st.cache_data(show_spinner=False)
+def fetch_quarterly_data(yf_code):
+    try:
+        ticker = yf.Ticker(yf_code)
+        q_financials = ticker.quarterly_income_stmt.T
+        if q_financials.empty: return None
+        
+        q_financials = q_financials.reset_index()
+        q_financials.rename(columns={'index': 'Date'}, inplace=True)
+        q_financials['Date'] = q_financials['Date'].dt.strftime('%Y-%m')
+        
+        cols_map = {'Total Revenue': '매출액(억)', 'Operating Income': '영업이익(억)', 'Net Income': '순이익(억)'}
+        final_data = []
+        for _, row in q_financials.iterrows():
+            data = {'분기': row['Date']}
+            for eng, kor in cols_map.items():
+                if eng in row:
+                    val = row[eng]
+                    if pd.notna(val): data[kor] = round(val / 100000000, 0)
+                    else: data[kor] = 0
+            final_data.append(data)
+            
+        df_q = pd.DataFrame(final_data)
+        if df_q.empty: return None
+        df_q = df_q.sort_values('분기', ascending=False)
+        return df_q
+    except: return None
 
 # =========================================================
 # 5. 차트 함수 & 시장 지표 함수
@@ -399,10 +422,10 @@ if menu == "📊 개별 종목 분석":
                         naver_text = fetch_naver_summary(dart_code)
                         if naver_text:
                             raw_text = naver_text
-                            source_label = "(출처: 네이버 금융)"
+                            source_label = ""
                         else:
                             raw_text = ticker_obj.info.get('longBusinessSummary', '')
-                            if raw_text: source_label = ""
+                            source_label = ""
                     else:
                         raw_text = ticker_obj.info.get('longBusinessSummary', '')
                         source_label = ""
@@ -448,7 +471,7 @@ if menu == "📊 개별 종목 분석":
                 port_badge_html = ""
 
             st.title(f"🚀 {selected} ({dart_code if is_korea else yf_code}) 기업 가치")
-            tab1, tab2 = st.tabs(["종목 대시보드", "재무분석"])
+            tab1, tab2 = st.tabs(["🚀 종목 대시보드", "💎 가치분석 (매출/영업/EPS)"])
 
             with tab1:
                 c1, c2, c3, c4 = st.columns(4)
@@ -492,9 +515,6 @@ if menu == "📊 개별 종목 분석":
                     if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
 
             with tab2:
-                # -------------------------------------------------------------
-                # [데이터 준비] 연간 데이터 미리 가져오기
-                # -------------------------------------------------------------
                 if not is_korea:
                     st.info("미국 주식은 지원하지 않습니다.")
                 else:
@@ -528,7 +548,6 @@ if menu == "📊 개별 종목 분석":
                             
                         cagr_max_str = calculate_cagr(df_max); cagr_5_str = calculate_cagr(df_5)
 
-                        # [지표 영역]
                         c_t1, c_t2, c_t3 = st.columns(3)
                         with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
                         with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
@@ -541,11 +560,29 @@ if menu == "📊 개별 종목 분석":
                         
                         st.write("---")
 
-                        # [핵심] 보기 선택 버튼 (토글)
-                        view_option = st.radio("조회 기준", ["📊 연간 실적 (10년)", "📆 분기 실적 (최근 3년)"], horizontal=True, label_visibility="collapsed")
+                        view_option = st.radio("조회 기준", ["연환산 (TTM)", "연간 실적", "분기 실적"], horizontal=True, label_visibility="collapsed")
                         st.write("")
 
-                        if "연간" in view_option:
+                        if "연환산" in view_option:
+                            with st.spinner("분기 데이터를 기반으로 TTM(연환산) 계산 중..."):
+                                df_quarter = fetch_quarterly_dart_calc(DART_API_KEY, dart_code)
+                                if df_quarter is not None and len(df_quarter) >= 4:
+                                    df_quarter = df_quarter.sort_values('분기')
+                                    cols_to_sum = ['매출액(억)', '영업이익(억)', '순이익(억)']
+                                    df_ttm = df_quarter.copy()
+                                    df_ttm[cols_to_sum] = df_ttm[cols_to_sum].rolling(window=4).sum()
+                                    df_ttm = df_ttm.dropna().sort_values('분기', ascending=False)
+                                    
+                                    st.dataframe(df_ttm.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
+                                    fig_ttm = go.Figure()
+                                    fig_ttm.add_trace(go.Bar(x=df_ttm['분기'], y=df_ttm['매출액(억)'], name='매출(TTM)', marker_color='#FFA726'))
+                                    fig_ttm.add_trace(go.Bar(x=df_ttm['분기'], y=df_ttm['영업이익(억)'], name='영업이익(TTM)', marker_color='#FF7043'))
+                                    fig_ttm.update_layout(title="연환산(TTM) 실적 추이", template="plotly_dark", barmode='group', height=400)
+                                    st.plotly_chart(fig_ttm, use_container_width=True)
+                                else:
+                                    st.warning("TTM 계산을 위한 데이터가 부족합니다.")
+
+                        elif "연간" in view_option:
                             st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
                             fig = make_subplots(specs=[[{"secondary_y": True}]])
                             fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['매출액(억)'], name='매출액(좌측)', marker_color='#90CAF9', opacity=0.6), secondary_y=False)
@@ -558,8 +595,8 @@ if menu == "📊 개별 종목 분석":
                             fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
                             st.plotly_chart(fig, use_container_width=True)
                         
-                        else: # 분기 선택 시 (DART)
-                            with st.spinner("분기 데이터 분석 중... (최근 3년)"):
+                        else: # 분기 선택 시
+                            with st.spinner("분기 데이터 분석 중..."):
                                 df_quarter = fetch_quarterly_dart_calc(DART_API_KEY, dart_code)
                             
                             if df_quarter is not None:
