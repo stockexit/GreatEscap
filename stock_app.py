@@ -18,7 +18,7 @@ from deep_translator import GoogleTranslator
 # 1. 화면 설정 & 스타일
 # =========================================================
 st.set_page_config(
-    page_title="사장님 투자 터미널 (Hybrid)", 
+    page_title="사장님 투자 터미널 (Pro)", 
     layout="wide",
     initial_sidebar_state="expanded" 
 )
@@ -50,6 +50,7 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
 
+    /* 버튼 스타일링 */
     div[role="radiogroup"] {
         background-color: transparent;
         padding: 5px 0;
@@ -89,7 +90,7 @@ def load_data():
         return None
 
 # =========================================================
-# 3. 데이터 수집 함수들 (DART & 네이버)
+# 3. 데이터 수집 함수들
 # =========================================================
 @st.cache_data(show_spinner=False)
 def fetch_naver_summary(dart_code):
@@ -121,7 +122,7 @@ def fetch_shares_history(ticker_code):
         return df_yearly[['연도', '상장주식수', '시가총액']].reset_index(drop=True)
     except: return pd.DataFrame()
 
-# [연간 데이터] DART 10년 (안정성 강화: 반환값 2개 보장)
+# [연간 데이터] DART
 @st.cache_data(show_spinner=False) 
 def fetch_core_financials_dart(api_key, ticker_code):
     try:
@@ -138,12 +139,11 @@ def fetch_core_financials_dart(api_key, ticker_code):
         for year in years:
             if len(result_data) >= 10: break
             try:
-                df = dart.finstate(ticker_code, year, reprt_code='11011') # 사업보고서(연간)
+                df = dart.finstate(ticker_code, year, reprt_code='11011') 
                 if df is not None and not df.empty:
                     df['account_nm'] = df['account_nm'].astype(str).str.replace(' ', '').str.strip()
                     
                     def get_val(nm_list):
-                        # 연결(CFS) 우선, 없으면 별도(OFS)
                         temp = df[(df['fs_div']=='CFS') & (df['account_nm'].isin(nm_list))]
                         if temp.empty: temp = df[(df['fs_div']=='OFS') & (df['account_nm'].isin(nm_list))]
                         if temp.empty: return 0
@@ -165,7 +165,6 @@ def fetch_core_financials_dart(api_key, ticker_code):
             df_dart = pd.DataFrame(result_data)
             df_shares = fetch_shares_history(ticker_code)
             
-            # 주식수 병합
             if not df_shares.empty:
                 df_final = pd.merge(df_dart, df_shares, on='연도', how='left')
             else:
@@ -174,7 +173,6 @@ def fetch_core_financials_dart(api_key, ticker_code):
             
             df_final = df_final.sort_values('연도', ascending=False)
             
-            # EPS 및 억 단위 변환
             df_final['매출액(억)'] = (df_final['매출액'] / 100000000).round(0)
             df_final['영업이익(억)'] = (df_final['영업이익'] / 100000000).round(0)
             df_final['순이익(억)'] = (df_final['순이익'] / 100000000).round(0)
@@ -184,9 +182,9 @@ def fetch_core_financials_dart(api_key, ticker_code):
         else:
             return None, "No Data Found"
     except Exception as e:
-        return None, str(e) # 에러 시에도 반드시 2개 반환
+        return None, str(e)
 
-# [분기 데이터] 네이버 금융 직접 크롤링 (헤더 파싱 강화)
+# [분기 데이터] 네이버 금융 "최근 분기 실적" 섹션 정밀 타겟팅
 @st.cache_data(show_spinner=False)
 def fetch_naver_quarterly(dart_code):
     try:
@@ -195,55 +193,20 @@ def fetch_naver_quarterly(dart_code):
         dfs = pd.read_html(res.text, encoding='cp949')
         
         target_df = None
-        
-        # '매출액'이나 '영업이익'이 첫 번째 컬럼(인덱스 후보)에 있는 테이블 찾기
+        # MultiIndex 컬럼인 경우에만 '최근 분기 실적'이 존재함
         for df in dfs:
-            # 데이터프레임이 비어있으면 패스
-            if df.empty: continue
-            
-            # 컬럼이나 첫 번째 열에 핵심 키워드가 있는지 확인
-            first_col_values = df.iloc[:, 0].astype(str).values.tolist() if df.shape[1] > 0 else []
-            if any("매출액" in s for s in first_col_values) or any("영업이익" in s for s in first_col_values):
-                target_df = df
-                break
+            if isinstance(df.columns, pd.MultiIndex):
+                if '최근 분기 실적' in df.columns.get_level_values(0):
+                    # [핵심] '최근 분기 실적' 섹션만 떼어냄 -> 연간 실적과 분리됨
+                    target_df = df['최근 분기 실적']
+                    break
         
         if target_df is None: return None
 
-        # --- [강력한 헤더 정리 로직] ---
-        # MultiIndex(두 줄 헤더)인 경우와 SingleIndex인 경우 모두 처리
+        # 인덱스 설정 (보통 첫 번째 컬럼이 계정명)
+        # 이미 '최근 분기 실적' 레벨을 떼어냈으므로 Single Index가 됨
+        target_df.set_index(target_df.columns[0], inplace=True)
         
-        # 1. 컬럼 이름을 문자열 리스트로 평탄화
-        cols = []
-        if isinstance(target_df.columns, pd.MultiIndex):
-            for col in target_df.columns:
-                # 튜플을 문자열로 합침 (예: ('최근 분기 실적', '2024.09') -> '2024.09')
-                # 날짜 패턴이 있는 부분만 가져오기
-                found_date = False
-                for part in col:
-                    if re.search(r'\d{4}\.\d{2}', str(part)):
-                        cols.append(str(part))
-                        found_date = True
-                        break
-                if not found_date:
-                    cols.append("IGNORE") # 날짜가 없으면 무시
-        else:
-            cols = [str(c) for c in target_df.columns]
-
-        target_df.columns = cols
-        
-        # 2. 첫 번째 컬럼을 인덱스로 설정 (매출액, 영업이익 등이 있는 열)
-        # 보통 0번 컬럼이 계정명임. 하지만 'IGNORE'로 되었을 수 있으니 확인
-        if "IGNORE" in target_df.columns[0] or "주요재무정보" in str(dfs[0].columns):
-             # 0번째 열의 데이터를 인덱스로 씀
-             target_df.set_index(target_df.columns[0], inplace=True)
-        else:
-             target_df.set_index(target_df.columns[0], inplace=True)
-
-        # 3. 날짜 형식이 아닌 컬럼 제거 ('전년동기' 등)
-        valid_cols = [c for c in target_df.columns if re.search(r'\d{4}\.\d{2}', str(c))]
-        target_df = target_df[valid_cols]
-
-        # 4. 데이터 추출
         row_map = {
             '매출액': '매출액(억)',
             '영업이익': '영업이익(억)',
@@ -252,17 +215,24 @@ def fetch_naver_quarterly(dart_code):
         
         result = []
         for col in target_df.columns:
+            # col은 날짜 문자열 (예: 2024.09, 2024.12(E))
             date_clean = str(col).replace('(E)', '').replace('(잠정)', '').strip()
-            row_data = {'분기': date_clean}
             
+            # 날짜 형식이 아니면 건너뜀 (혹시 모를 오류 방지)
+            if not re.search(r'\d{4}\.\d{2}', date_clean): continue
+
+            row_data = {'분기': date_clean}
             for key_keyword, new_key in row_map.items():
                 try:
-                    # 해당 키워드가 포함된 행 찾기
+                    # 해당 키워드가 포함된 행 찾기 (예: 영업이익)
+                    # na=False로 NaN 인덱스 에러 방지
                     found_rows = target_df.index[target_df.index.str.contains(key_keyword, na=False)]
+                    
                     if len(found_rows) > 0:
+                        # 첫번째 발견된 행 사용 (보통 가장 상단이 메인 계정)
                         val = target_df.loc[found_rows[0], col]
+                        
                         if pd.notna(val) and str(val).strip() != '-':
-                            # 쉼표 제거 후 정수 변환
                             row_data[new_key] = int(float(str(val).replace(',', '')))
                         else:
                             row_data[new_key] = 0
@@ -271,13 +241,13 @@ def fetch_naver_quarterly(dart_code):
                 except:
                     row_data[new_key] = 0
             
-            # 데이터가 모두 0이면 의미 없으므로 제외할 수도 있으나, 일단 포함
-            if row_data['매출액(억)'] != 0 or row_data['영업이익(억)'] != 0:
-                result.append(row_data)
+            # 데이터가 유효한 경우만 추가 (0 0 0 은 제외할 수도 있지만, 적자일 수도 있으므로 포함)
+            result.append(row_data)
             
         if not result: return None
         
         df_final = pd.DataFrame(result)
+        # 최신순 정렬 (역순)
         df_final = df_final.sort_values('분기', ascending=False)
         return df_final
 
@@ -563,7 +533,8 @@ if menu == "📊 개별 종목 분석":
                         with c_b3: st.metric("성장 모멘텀", "", delta=f"{momentum_avg:+.1f}%")
                         st.write("---")
 
-                        view_option = st.radio("조회 기준", ["연환산 (TTM)", "연간 실적", "분기 실적"], horizontal=True, label_visibility="collapsed")
+                        # [버튼] 연간 실적 (10년) / 분기 실적 (최근 분기) - TTM 제거됨
+                        view_option = st.radio("조회 기준", ["연간 실적 (10년)", "분기 실적 (최근 분기)"], horizontal=True, label_visibility="collapsed")
                         st.write("")
 
                         if "연간" in view_option:
@@ -584,33 +555,18 @@ if menu == "📊 개별 종목 분석":
                             fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
                             st.plotly_chart(fig, use_container_width=True)
                         
-                        else: # 분기 또는 TTM (네이버)
+                        else: # 분기
                             with st.spinner("분기 데이터 조회 중... (네이버)"):
                                 df_quarter = fetch_naver_quarterly(dart_code)
                             
                             if df_quarter is not None:
-                                if "TTM" in view_option: # TTM 계산
-                                    if len(df_quarter) >= 4:
-                                        df_q_sorted = df_quarter.sort_values('분기')
-                                        cols_to_sum = ['매출액(억)', '영업이익(억)', '순이익(억)']
-                                        df_ttm = df_q_sorted.copy()
-                                        df_ttm[cols_to_sum] = df_ttm[cols_to_sum].rolling(window=4).sum()
-                                        df_ttm = df_ttm.dropna().sort_values('분기', ascending=False)
-                                        
-                                        st.dataframe(df_ttm.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
-                                        fig_ttm = go.Figure()
-                                        fig_ttm.add_trace(go.Bar(x=df_ttm['분기'], y=df_ttm['매출액(억)'], name='매출(TTM)', marker_color='#FFA726'))
-                                        fig_ttm.add_trace(go.Bar(x=df_ttm['분기'], y=df_ttm['영업이익(억)'], name='영업이익(TTM)', marker_color='#FF7043'))
-                                        fig_ttm.update_layout(title="연환산(TTM) 실적 추이", template="plotly_dark", barmode='group', height=400)
-                                        st.plotly_chart(fig_ttm, use_container_width=True)
-                                    else: st.warning("TTM 계산을 위한 데이터 부족 (최소 4분기 필요)")
-                                else: # 순수 분기
-                                    st.dataframe(df_quarter.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
-                                    fig_q = go.Figure()
-                                    fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['매출액(억)'], name='매출액', marker_color='#90CAF9'))
-                                    fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['영업이익(억)'], name='영업이익', marker_color='#2962FF'))
-                                    fig_q.update_layout(title="분기 실적 추이", template="plotly_dark", barmode='group', height=400)
-                                    st.plotly_chart(fig_q, use_container_width=True)
+                                st.dataframe(df_quarter.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
+                                
+                                fig_q = go.Figure()
+                                fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['매출액(억)'], name='매출액', marker_color='#90CAF9'))
+                                fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['영업이익(억)'], name='영업이익', marker_color='#2962FF'))
+                                fig_q.update_layout(title="분기 실적 추이", template="plotly_dark", barmode='group', height=400)
+                                st.plotly_chart(fig_q, use_container_width=True)
                             else:
                                 st.warning("분기 데이터를 불러올 수 없습니다.")
 
