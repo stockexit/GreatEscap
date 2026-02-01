@@ -13,7 +13,6 @@ import requests
 from bs4 import BeautifulSoup
 from pykrx import stock 
 from deep_translator import GoogleTranslator 
-import concurrent.futures # 병렬 처리를 위한 핵심 라이브러리
 
 # =========================================================
 # 1. 화면 설정 & 스타일
@@ -26,16 +25,10 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* 탭 폰트 크기 */
     button[data-baseweb="tab"] div p { font-size: 18px !important; font-weight: bold !important; }
-    
-    /* 테이블 헤더 스타일 */
     thead tr th { background-color: #f5f6f7 !important; color: #333 !important; font-weight: bold !important; }
-    
-    /* 일반 메트릭 값 크기 */
     div[data-testid="stMetricValue"] { font-size: 26px !important; }
     
-    /* 성장 모멘텀 등 녹색 배지(Delta) 커스텀 */
     div[data-testid="stMetricDelta"] {
         font-size: 22px !important;
         font-weight: bold !important;
@@ -46,7 +39,6 @@ st.markdown("""
     }
     div[data-testid="stMetricDelta"] svg { width: 20px !important; height: 20px !important; }
     
-    /* 회사 개요 박스 스타일 */
     .summary-box {
         background-color: #262730;
         padding: 25px;
@@ -98,7 +90,7 @@ def load_data():
         return None
 
 # =========================================================
-# 3. 데이터 수집 함수들
+# 3. 데이터 수집 함수들 (FnGuide 크롤링 적용)
 # =========================================================
 @st.cache_data(show_spinner=False)
 def fetch_naver_summary(dart_code):
@@ -130,156 +122,101 @@ def fetch_shares_history(ticker_code):
         return df_yearly[['연도', '상장주식수', '시가총액']].reset_index(drop=True)
     except: return pd.DataFrame()
 
-# [연간 데이터] DART 10년 (병렬 처리 미적용 - 연간은 데이터 양이 적어 괜찮음)
-@st.cache_data(show_spinner=False) 
-def fetch_core_financials(api_key, ticker_code):
-    try: dart = OpenDartReader(api_key)
-    except Exception as e: return None, None, f"API 키 오류: {e}"
-    if len(str(ticker_code)) != 6: return None, None, "조회 불가"
-    now_year = datetime.datetime.now().year 
-    years = range(now_year, now_year - 12, -1) 
-    result_data = []
-    try:
-        for year in years:
-            if len(result_data) >= 10: break
-            df = None
-            try: df = dart.finstate(ticker_code, year, reprt_code='11011')
-            except: pass 
-            if df is not None and not df.empty and 'account_nm' in df.columns:
-                df['account_clean'] = df['account_nm'].astype(str).str.replace(' ', '').str.strip()
-                mask_sales = df['account_clean'].str.contains('매출액|영업수익') & ~df['account_clean'].str.contains('원가|총이익|미실현')
-                mask_op = df['account_clean'].str.contains('영업이익') & ~df['account_clean'].str.contains('기타|금융|관계|지분')
-                mask_net = df['account_clean'].str.contains('당기순이익') & ~df['account_clean'].str.contains('포괄') & ~df['account_clean'].str.contains('비지배')
-                def extract_value(dataframe, mask):
-                    if dataframe.empty: return 0
-                    rows = dataframe[mask]
-                    if rows.empty: return 0
-                    if len(rows) > 1 and '당기순이익' in str(mask):
-                        p_row = rows[rows['account_clean'].str.contains('지배')]
-                        if not p_row.empty: rows = p_row
-                    val_str = str(rows.iloc[0]['thstrm_amount']).replace(',', '').strip()
-                    try: return float(val_str)
-                    except: return 0
-                df_cfs = df[df['fs_div'] == 'CFS']; df_ofs = df[df['fs_div'] == 'OFS']
-                sales = extract_value(df_cfs, mask_sales)
-                op_income = extract_value(df_cfs, mask_op)
-                net_income = extract_value(df_cfs, mask_net)
-                if sales == 0: sales = extract_value(df_ofs, mask_sales)
-                if op_income == 0: op_income = extract_value(df_ofs, mask_op)
-                if net_income == 0: net_income = extract_value(df_ofs, mask_net)
-                if sales != 0 or op_income != 0:
-                    result_data.append({'연도': str(year), '매출액': sales, '영업이익': op_income, '순이익': net_income})
-            time.sleep(0.05)
-        if result_data:
-            df_dart = pd.DataFrame(result_data)
-            df_shares = fetch_shares_history(ticker_code)
-            df_final = pd.merge(df_dart, df_shares, on='연도', how='left') if not df_shares.empty else df_dart
-            df_final = df_final.sort_values('연도', ascending=False)
-            df_final['EPS(보정)'] = df_final.apply(lambda r: r['순이익']/r['상장주식수'] if r.get('상장주식수',0)>0 else 0, axis=1)
-            df_final['EV/EBIT(배)'] = df_final.apply(lambda r: r['시가총액']/r['영업이익'] if r.get('영업이익',0)>0 else 0, axis=1)
-            df_final['매출액(억)'] = (df_final['매출액'] / 100000000).round(0)
-            df_final['영업이익(억)'] = (df_final['영업이익'] / 100000000).round(0)
-            df_final['순이익(억)'] = (df_final['순이익'] / 100000000).round(0)
-            df_final['시가총액(억)'] = (df_final.get('시가총액',0) / 100000000).round(0)
-            df_final['EPS(원)'] = df_final['EPS(보정)'].round(0)
-            df_final['멀티플(배)'] = df_final['EV/EBIT(배)'].round(1)
-            view_cols = ['연도', '매출액(억)', '영업이익(억)', '순이익(억)', '시가총액(억)', '멀티플(배)', 'EPS(원)']
-            return df_final[view_cols].set_index('연도').T, df_final.head(10), "OK"
-        else: return None, None, "데이터 없음"
-    except Exception as e: return None, None, f"오류: {e}"
-
-# [핵심 기능] DART 5년치 분기 데이터 병렬 수집 (속도 개선)
-def get_dart_report_data(dart, code, year, reprt_code):
-    """단일 보고서 데이터를 가져오는 작업자 함수"""
-    try:
-        df = dart.finstate(code, year, reprt_code=reprt_code)
-        if df is None or df.empty: return None
-        
-        df['account_nm'] = df['account_nm'].astype(str).str.strip()
-        
-        def get_val(nm_list):
-            temp = df[(df['fs_div']=='CFS') & (df['account_nm'].isin(nm_list))]
-            if temp.empty: temp = df[(df['fs_div']=='OFS') & (df['account_nm'].isin(nm_list))]
-            if temp.empty: return 0
-            try:
-                # 당기 금액 가져오기
-                val = temp.iloc[0]['thstrm_amount']
-                return float(str(val).replace(',', ''))
-            except: return 0
-
-        sales = get_val(['매출액', '수익(매출액)', '영업수익'])
-        op = get_val(['영업이익', '영업이익(손실)'])
-        net = get_val(['당기순이익', '당기순이익(손실)', '분기순이익', '분기순이익(손실)', '반기순이익', '반기순이익(손실)'])
-        return {'sales': sales, 'op': op, 'net': net}
-    except: return None
-
+# [핵심] FnGuide 연간/분기 데이터 크롤링 (가장 정확함)
 @st.cache_data(show_spinner=False)
-def fetch_quarterly_dart_5years(api_key, ticker_code):
+def fetch_fnguide_financials(ticker_code):
+    """FnGuide에서 재무제표 크롤링 (정확도 최우선)"""
     try:
-        dart = OpenDartReader(api_key)
-        now_year = datetime.datetime.now().year
-        years = range(now_year, now_year - 6, -1) # 6년치 조회 (최신 5년 확보 위해)
+        # FnGuide 재무제표 페이지 (IFRS 연결 기준)
+        url = f"https://comp.fnguide.com/SVO2/ASP/SVD_Finance.asp?pGB=1&gicode=A{ticker_code}&cID=&MenuYn=Y&ReportGB=D&NewMenuID=103&stkGb=701"
         
-        # 수집할 목록 정의
-        tasks = []
-        for year in years:
-            tasks.append((year, '11013')) # 1분기
-            tasks.append((year, '11012')) # 반기
-            tasks.append((year, '11014')) # 3분기
-            tasks.append((year, '11011')) # 사업보고서
-
-        results = {}
+        # 테이블 읽기
+        dfs = pd.read_html(requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}).text)
         
-        # 병렬 처리 실행 (속도 향상 핵심)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_info = {executor.submit(get_dart_report_data, dart, ticker_code, year, r_code): (year, r_code) for year, r_code in tasks}
+        # dfs[0]: 연간 포괄손익계산서, dfs[1]: 분기 포괄손익계산서
+        df_annual = dfs[0]
+        df_quarter = dfs[1]
+        
+        # 데이터 정리 함수
+        def clean_fnguide_df(df, type_name):
+            # 첫 번째 컬럼(계정명)을 인덱스로
+            df = df.set_index(df.columns[0])
             
-            for future in concurrent.futures.as_completed(future_to_info):
-                y, rc = future_to_info[future]
-                data = future.result()
-                if data:
-                    if y not in results: results[y] = {}
-                    results[y][rc] = data
-        
-        # 분기별 순수 실적 계산
-        quarter_final = []
-        for year in sorted(results.keys(), reverse=True):
-            r = results[year]
+            # 필요한 행만 추출 (매출액, 영업이익, 당기순이익)
+            # FnGuide 계정명: '매출액', '영업이익', '당기순이익' (지배주주 순이익이 더 정확할 수 있으나 일단 전체 순이익)
+            target_rows = {
+                '매출액': '매출액(억)',
+                '영업이익': '영업이익(억)',
+                '당기순이익': '순이익(억)' 
+            }
             
-            # 1Q
-            if '11013' in r:
-                q1 = r['11013']
-                quarter_final.append({'분기': f"{year}.1Q", '매출액(억)': q1['sales'], '영업이익(억)': q1['op'], '순이익(억)': q1['net']})
+            result_list = []
+            
+            # 컬럼(기간) 순회
+            for col in df.columns:
+                # '전년동기' 같은 비교 컬럼 제외하고 날짜형식(YYYY/MM)만 가져오기
+                if not re.search(r'\d{4}/\d{2}', col): continue
                 
-                # 2Q (반기 - 1Q)
-                if '11012' in r:
-                    acc_half = r['11012']
-                    q2 = {k: acc_half[k] - q1[k] for k in q1}
-                    quarter_final.append({'분기': f"{year}.2Q", '매출액(억)': q2['sales'], '영업이익(억)': q2['op'], '순이익(억)': q2['net']})
-                    
-                    # 3Q (3분기누적 - 반기)
-                    if '11014' in r:
-                        acc_3q = r['11014']
-                        q3 = {k: acc_3q[k] - acc_half[k] for k in q1}
-                        quarter_final.append({'분기': f"{year}.3Q", '매출액(억)': q3['sales'], '영업이익(억)': q3['op'], '순이익(억)': q3['net']})
-                        
-                        # 4Q (연간 - 3분기누적)
-                        if '11011' in r:
-                            acc_year = r['11011']
-                            q4 = {k: acc_year[k] - acc_3q[k] for k in q1}
-                            quarter_final.append({'분기': f"{year}.4Q", '매출액(억)': q4['sales'], '영업이익(억)': q4['op'], '순이익(억)': q4['net']})
+                # 기간 이름 정리 (2024/12 -> 2024.4Q or 2024)
+                period_str = col
+                if type_name == 'quarter':
+                    # 분기 포맷 변환 (2024/03 -> 2024.1Q)
+                    try:
+                        y, m = col.split('/')
+                        q = (int(m) - 1) // 3 + 1
+                        period_clean = f"{y}.{q}Q"
+                    except: period_clean = col
+                else:
+                    # 연간 포맷
+                    period_clean = col.split('/')[0]
 
-        if not quarter_final: return None
+                data = {'기간': period_clean}
+                
+                for key, new_key in target_rows.items():
+                    try:
+                        # 해당 계정명이 포함된 행 찾기
+                        val = df.loc[df.index.str.contains(key), col].iloc[0]
+                        if pd.notna(val):
+                            data[new_key] = int(val) # FnGuide는 이미 억 단위
+                        else:
+                            data[new_key] = 0
+                    except: 
+                        data[new_key] = 0
+                
+                result_list.append(data)
+                
+            return pd.DataFrame(result_list)
+
+        df_a_clean = clean_fnguide_df(df_annual, 'annual')
+        df_q_clean = clean_fnguide_df(df_quarter, 'quarter')
         
-        df_res = pd.DataFrame(quarter_final)
-        # 억 단위 변환
-        for col in ['매출액(억)', '영업이익(억)', '순이익(억)']:
-            df_res[col] = (df_res[col] / 100000000).round(0)
-            
-        return df_res.sort_values('분기', ascending=False).head(20) # 최근 20분기(5년)만 반환
+        # 연간 데이터는 최신순 정렬
+        df_a_clean = df_a_clean.sort_values('기간', ascending=False)
+        # 분기 데이터는 최신순 정렬
+        df_q_clean = df_q_clean.sort_values('기간', ascending=False)
+        
+        return df_a_clean, df_q_clean
 
     except Exception as e:
-        return None
+        return None, None
+
+# [EPS 및 주가 정보 보강용] - 기존 DART 로직 일부 활용 (EPS 계산 등 보조)
+# 하지만 표시는 FnGuide 데이터로 대체함.
+@st.cache_data(show_spinner=False)
+def get_eps_growth_info(api_key, ticker_code, fnguide_annual):
+    # EPS 성장률 등 지표 계산은 정확한 FnGuide 연간 데이터를 기반으로 함
+    try:
+        # 시가총액 정보 가져오기
+        df_shares = fetch_shares_history(ticker_code)
+        
+        # FnGuide 데이터와 병합
+        if fnguide_annual is not None and not fnguide_annual.empty and not df_shares.empty:
+            merged = pd.merge(fnguide_annual, df_shares, left_on='기간', right_on='연도', how='left')
+            merged['EPS(원)'] = merged.apply(lambda x: x['순이익(억)'] * 100000000 / x['상장주식수'] if x['상장주식수'] > 0 else 0, axis=1)
+            return merged
+        return fnguide_annual
+    except:
+        return fnguide_annual
 
 # =========================================================
 # 5. 차트 함수 & 시장 지표 함수
@@ -517,93 +454,113 @@ if menu == "📊 개별 종목 분석":
                     st.info("미국 주식은 지원하지 않습니다.")
                 else:
                     DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
-                    display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
-                    
-                    if display_df is not None:
-                        raw_data = raw_data.sort_values('연도')
-                        eps_series = raw_data['EPS(원)']
-                        eps_mean_10 = eps_series.mean()
-                        eps_mean_5 = eps_series.tail(5).mean()
-                        latest_eps = eps_series.iloc[-1]
-
-                        latest_vs_10y_rate = ((latest_eps - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
-                        momentum_avg = ((eps_mean_5 - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
-
-                        df_max = raw_data
-                        period_max = len(df_max)
-                        label_max = f"{period_max}년 연평균(CAGR)" if period_max < 10 else "10년 연평균(CAGR)"
-                        df_5 = raw_data.tail(5) if len(raw_data) >= 5 else raw_data
-
-                        def calculate_cagr(df):
-                            if len(df) < 2: return "데이터 부족"
-                            start_eps = df['EPS(원)'].iloc[0]; end_eps = df['EPS(원)'].iloc[-1]; years = len(df)-1
-                            if start_eps <= 0: start_eps = 1 
-                            if end_eps <= 0: return "적자 지속"
-                            try:
-                                cagr = (end_eps / start_eps) ** (1/years) - 1
-                                return f"{cagr*100:+.1f}%"
-                            except: return "계산 오류"
-                            
-                        cagr_max_str = calculate_cagr(df_max); cagr_5_str = calculate_cagr(df_5)
-
-                        c_t1, c_t2, c_t3 = st.columns(3)
-                        with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
-                        with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
-                        with c_t3: st.metric("최신 EPS 성장률", "", delta=f"{latest_vs_10y_rate:+.1f}%")
-                        st.write("") 
-                        c_b1, c_b2, c_b3 = st.columns(3)
-                        with c_b1: st.metric(label_max, cagr_max_str)
-                        with c_b2: st.metric("최근 5년 연평균", cagr_5_str)
-                        with c_b3: st.metric("성장 모멘텀", "", delta=f"{momentum_avg:+.1f}%")
+                    with st.spinner(f"데이터 정밀 분석 중... (FnGuide)"):
+                        # [핵심] FnGuide에서 연간, 분기 데이터 모두 가져옴
+                        df_a, df_q = fetch_fnguide_financials(dart_code)
                         
-                        st.write("---")
+                        # 지표 계산용 데이터 준비 (연간 데이터 + 주식수)
+                        # 주식수는 fetch_shares_history로 가져와서 병합
+                        df_metrics = get_eps_growth_info(DART_API_KEY, dart_code, df_a)
+                    
+                    if df_metrics is not None and not df_metrics.empty:
+                        # EPS 데이터가 있는지 확인
+                        if 'EPS(원)' in df_metrics.columns:
+                            eps_series = df_metrics.sort_values('기간')['EPS(원)'].dropna()
+                            if not eps_series.empty:
+                                eps_mean_10 = eps_series.mean()
+                                eps_mean_5 = eps_series.tail(5).mean()
+                                latest_eps = eps_series.iloc[-1]
+                                
+                                latest_vs_10y_rate = ((latest_eps - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
+                                momentum_avg = ((eps_mean_5 - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
+                                
+                                # CAGR 계산
+                                def calculate_cagr(series):
+                                    if len(series) < 2: return "데이터 부족"
+                                    start_val = series.iloc[0]
+                                    end_val = series.iloc[-1]
+                                    years = len(series) - 1
+                                    
+                                    if start_val <= 0: start_val = 1 # 적자 보정
+                                    if end_val <= 0: return "적자 지속"
+                                    
+                                    try:
+                                        cagr = (end_val / start_val) ** (1/years) - 1
+                                        return f"{cagr*100:+.1f}%"
+                                    except: return "계산 오류"
 
+                                cagr_max_str = calculate_cagr(eps_series)
+                                cagr_5_str = calculate_cagr(eps_series.tail(5))
+
+                                # [지표 영역]
+                                c_t1, c_t2, c_t3 = st.columns(3)
+                                with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
+                                with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
+                                with c_t3: st.metric("최신 EPS 성장률", "", delta=f"{latest_vs_10y_rate:+.1f}%")
+                                st.write("") 
+                                c_b1, c_b2, c_b3 = st.columns(3)
+                                with c_b1: st.metric("10년 연평균(CAGR)", cagr_max_str)
+                                with c_b2: st.metric("최근 5년 연평균", cagr_5_str)
+                                with c_b3: st.metric("성장 모멘텀", "", delta=f"{momentum_avg:+.1f}%")
+                                
+                                st.write("---")
+
+                        # [핵심] 보기 선택 버튼 (토글)
                         view_option = st.radio("조회 기준", ["연환산 (TTM)", "연간 실적", "분기 실적"], horizontal=True, label_visibility="collapsed")
                         st.write("")
 
                         if "연환산" in view_option:
-                            with st.spinner("5년치 분기 데이터를 바탕으로 TTM 계산 중... (병렬 처리)"):
-                                df_quarter = fetch_quarterly_dart_5years(DART_API_KEY, dart_code)
-                                if df_quarter is not None and len(df_quarter) >= 4:
-                                    df_quarter = df_quarter.sort_values('분기')
-                                    cols_to_sum = ['매출액(억)', '영업이익(억)', '순이익(억)']
-                                    df_ttm = df_quarter.copy()
-                                    df_ttm[cols_to_sum] = df_ttm[cols_to_sum].rolling(window=4).sum()
-                                    df_ttm = df_ttm.dropna().sort_values('분기', ascending=False)
-                                    
-                                    st.dataframe(df_ttm.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
-                                    fig_ttm = go.Figure()
-                                    fig_ttm.add_trace(go.Bar(x=df_ttm['분기'], y=df_ttm['매출액(억)'], name='매출(TTM)', marker_color='#FFA726'))
-                                    fig_ttm.add_trace(go.Bar(x=df_ttm['분기'], y=df_ttm['영업이익(억)'], name='영업이익(TTM)', marker_color='#FF7043'))
-                                    fig_ttm.update_layout(title="연환산(TTM) 실적 추이", template="plotly_dark", barmode='group', height=400)
-                                    st.plotly_chart(fig_ttm, use_container_width=True)
-                                else:
-                                    st.warning("TTM 계산을 위한 데이터가 부족합니다.")
+                            if df_q is not None and len(df_q) >= 4:
+                                df_q_sorted = df_q.sort_values('기간') # 과거->미래
+                                cols_to_sum = ['매출액(억)', '영업이익(억)', '순이익(억)']
+                                df_ttm = df_q_sorted.copy()
+                                # 4분기 이동 합계
+                                df_ttm[cols_to_sum] = df_ttm[cols_to_sum].rolling(window=4).sum()
+                                df_ttm = df_ttm.dropna().sort_values('기간', ascending=False)
+                                
+                                st.dataframe(df_ttm.set_index('기간').T.style.format("{:,.0f}"), use_container_width=True)
+                                
+                                fig_ttm = go.Figure()
+                                fig_ttm.add_trace(go.Bar(x=df_ttm['기간'], y=df_ttm['매출액(억)'], name='매출(TTM)', marker_color='#FFA726'))
+                                fig_ttm.add_trace(go.Bar(x=df_ttm['기간'], y=df_ttm['영업이익(억)'], name='영업이익(TTM)', marker_color='#FF7043'))
+                                fig_ttm.update_layout(title="연환산(TTM) 실적 추이", template="plotly_dark", barmode='group', height=400)
+                                st.plotly_chart(fig_ttm, use_container_width=True)
+                            else:
+                                st.warning("TTM 계산을 위한 데이터가 부족합니다.")
 
                         elif "연간" in view_option:
-                            st.dataframe(display_df.style.format("{:,.0f}"), use_container_width=True)
-                            fig = make_subplots(specs=[[{"secondary_y": True}]])
-                            fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['매출액(억)'], name='매출액(좌측)', marker_color='#90CAF9', opacity=0.6), secondary_y=False)
-                            fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['영업이익(억)'], name='영업이익(좌측)', marker_color='#2962FF'), secondary_y=False)
-                            fig.add_trace(go.Scatter(x=raw_data['연도'], y=raw_data['EPS(원)'], name='EPS(보정됨)', mode='lines+markers+text', line=dict(color='#00E676', width=3), marker=dict(size=8, color='#00E676', symbol='diamond'), text=raw_data['EPS(원)'].apply(lambda x: f"{x:,.0f}"), textposition="top center", textfont=dict(color="white", size=11)), secondary_y=True)
-                            fig.add_hline(y=eps_mean_10, line_dash="dash", line_color="#FFAB00", line_width=2, secondary_y=True, annotation_text=f"10년평균: {eps_mean_10:,.0f}", annotation_position="top left", annotation_font_color="#FFAB00")
-                            fig.add_hline(y=eps_mean_5, line_dash="dot", line_color="#D500F9", line_width=2, secondary_y=True, annotation_text=f"5년평균: {eps_mean_5:,.0f}", annotation_position="bottom left", annotation_font_color="#D500F9")
-                            fig.update_layout(title=f"{selected} 실적 성장 추이 (연간)", template="plotly_dark", barmode='group', height=550, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                            fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
-                            fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
-                            st.plotly_chart(fig, use_container_width=True)
+                            if df_a is not None:
+                                st.dataframe(df_a.set_index('기간').T.style.format("{:,.0f}"), use_container_width=True)
+                                
+                                fig = make_subplots(specs=[[{"secondary_y": True}]])
+                                # 최신순 -> 과거순이므로 차트 그릴 땐 뒤집어야 함
+                                df_a_rev = df_a.iloc[::-1]
+                                
+                                fig.add_trace(go.Bar(x=df_a_rev['기간'], y=df_a_rev['매출액(억)'], name='매출액', marker_color='#90CAF9', opacity=0.6), secondary_y=False)
+                                fig.add_trace(go.Bar(x=df_a_rev['기간'], y=df_a_rev['영업이익(억)'], name='영업이익', marker_color='#2962FF'), secondary_y=False)
+                                
+                                # EPS 데이터가 있으면 추가
+                                if 'EPS(원)' in df_metrics.columns:
+                                    # df_metrics도 기간 기준으로 정렬
+                                    eps_plot = df_metrics.sort_values('기간')
+                                    fig.add_trace(go.Scatter(x=eps_plot['기간'], y=eps_plot['EPS(원)'], name='EPS', mode='lines+markers+text', line=dict(color='#00E676', width=3), text=eps_plot['EPS(원)'].apply(lambda x: f"{x:,.0f}"), textposition="top center"), secondary_y=True)
+
+                                fig.update_layout(title=f"{selected} 연간 실적 추이", template="plotly_dark", barmode='group', height=500, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                                fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
+                                fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning("연간 데이터를 불러올 수 없습니다.")
                         
                         else: # 분기 선택 시
-                            with st.spinner("5년치 분기 데이터를 고속 수집 중입니다... (DART 병렬 처리)"):
-                                df_quarter = fetch_quarterly_dart_5years(DART_API_KEY, dart_code)
-                            
-                            if df_quarter is not None:
-                                st.dataframe(df_quarter.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
+                            if df_q is not None:
+                                st.dataframe(df_q.set_index('기간').T.style.format("{:,.0f}"), use_container_width=True)
                                 
                                 fig_q = go.Figure()
-                                fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['매출액(억)'], name='매출액', marker_color='#90CAF9'))
-                                fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['영업이익(억)'], name='영업이익', marker_color='#2962FF'))
-                                fig_q.update_layout(title="분기 실적 추이 (5년)", template="plotly_dark", barmode='group', height=400)
+                                df_q_rev = df_q.iloc[::-1] # 차트용 정렬
+                                fig_q.add_trace(go.Bar(x=df_q_rev['기간'], y=df_q_rev['매출액(억)'], name='매출액', marker_color='#90CAF9'))
+                                fig_q.add_trace(go.Bar(x=df_q_rev['기간'], y=df_q_rev['영업이익(억)'], name='영업이익', marker_color='#2962FF'))
+                                fig_q.update_layout(title="분기 실적 추이", template="plotly_dark", barmode='group', height=400)
                                 st.plotly_chart(fig_q, use_container_width=True)
                             else:
                                 st.warning("분기 데이터를 불러올 수 없습니다.")
