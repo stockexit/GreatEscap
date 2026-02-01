@@ -14,6 +14,10 @@ try:
     # finance_all 테이블에서 종목명 목록을 가져옴 (중복 제거)
     stock_list = pd.read_sql("SELECT DISTINCT stock_name FROM finance_all", conn)['stock_name'].tolist()
     conn.close()
+    
+    # 리스트가 비어있을 경우 대비
+    if not stock_list:
+        stock_list = ["삼성전자", "월덱스"]
 except:
     stock_list = ["삼성전자", "월덱스"] # DB 에러 시 기본값
 
@@ -25,7 +29,7 @@ query = f"SELECT stock_name, bsns_year, quarter, account_nm, thstrm_amount FROM 
 df = pd.read_sql(query, conn)
 conn.close()
 
-# 4. 데이터 현황 표시 (새로 추가된 기능) 🌟
+# 4. 데이터 현황 표시
 if not df.empty:
     max_year = df['bsns_year'].max()
     min_year = df['bsns_year'].min()
@@ -33,7 +37,7 @@ if not df.empty:
 else:
     st.error("데이터가 없습니다. DB를 확인해주세요.")
 
-# 5. 단위 변환
+# 5. 단위 변환 (삼성전자는 조 단위, 나머지는 억 단위)
 if company == "삼성전자":
     unit = 1000000000000
     unit_nm = "조원"
@@ -72,7 +76,7 @@ cf_map = {
     '기말현금및현금성자산': '04. 기말 현금', '현금및현금성자산의 기말잔액': '04. 기말 현금'
 }
 
-# 7. 탭 구성 및 출력
+# 7. 탭 구성 및 출력 함수
 st.subheader(f"📈 {company} 재무제표 (단위: {unit_nm})")
 tab1, tab2, tab3 = st.tabs(["손익계산서", "재무상태표", "현금흐름표"])
 
@@ -92,11 +96,18 @@ def show_table(mapping_dict):
     # 빈칸 0으로 채우기
     pivot = pivot.fillna(0)
     
-    # ⭐️ 정렬: 최신 연도가 왼쪽으로 오게 정렬 ⭐️
-    # 컬럼(연도, 분기)을 내림차순으로 정렬
+    # 정렬: 최신 연도가 왼쪽으로 오게 정렬
     pivot = pivot.sort_index(axis=1, ascending=False)
     
-    st.dataframe(pivot.style.format(f"{{:,.1f}} {unit_nm}"))
+    # ⭐️ 핵심: 높이 자동 조절 로직 ⭐️
+    # (행 개수 + 헤더 1줄) * 35픽셀 + 여유분 3px
+    dynamic_height = (len(pivot) + 1) * 35 + 3
+    
+    st.dataframe(
+        pivot.style.format(f"{{:,.1f}} {unit_nm}"), 
+        use_container_width=True, # 가로 꽉 차게
+        height=dynamic_height     # 세로 꽉 차게
+    )
 
 with tab1:
     st.markdown("#### 📋 손익계산서 (Income Statement)")
