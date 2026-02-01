@@ -57,20 +57,12 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
 
-    /* [추가] 라디오 버튼을 탭/버튼처럼 보이게 스타일링 */
+    /* [수정] 라디오 버튼을 탭처럼 보이게 스타일링 */
     div[role="radiogroup"] {
-        background-color: #262730;
-        padding: 5px;
-        border-radius: 10px;
-        display: inline-flex;
+        background-color: transparent;
+        margin-bottom: 10px;
     }
-    div[role="radiogroup"] label {
-        padding: 5px 20px;
-        border-radius: 8px;
-        margin-right: 5px;
-        font-weight: bold;
-        transition: background-color 0.3s;
-    }
+    /* 선택된 항목 강조 등은 Streamlit 기본 테마를 따르되 가로 배치 */
 </style>
 """, unsafe_allow_html=True)
 
@@ -181,6 +173,7 @@ def fetch_core_financials(api_key, ticker_code):
         else: return None, None, "데이터 없음"
     except Exception as e: return None, None, f"오류: {e}"
 
+# [분기 데이터] yfinance 활용 (속도 최적화)
 @st.cache_data(show_spinner=False)
 def fetch_quarterly_data(yf_code):
     try:
@@ -210,7 +203,7 @@ def fetch_quarterly_data(yf_code):
     except: return None
 
 # =========================================================
-# 5. 차트 함수 & 시장 지표 함수
+# 5. 차트 함수
 # =========================================================
 def draw_chart(ticker, period, title, unit, current_price=None, target_min=None, target_max=None, target_buy=None):
     try:
@@ -441,16 +434,16 @@ if menu == "📊 개별 종목 분석":
                     if str(note).startswith('http'): st.link_button("🔗 링크 열기", note)
 
             with tab2:
-                # [수정] 탭(Tab) 대신 라디오 버튼(Toggle)으로 '페이지 내 전환' 구현
-                view_option = st.radio("조회 기준", ["📊 연간 실적 (10년)", "📆 분기 실적 (최근 5분기)"], horizontal=True, label_visibility="collapsed")
-                st.write("") # 간격
+                # [핵심 변경] 탭(Tabs) 대신 라디오 버튼을 사용하여 표 바로 위에 배치
+                view_option = st.radio("조회 기준", ["연간 실적 (10년)", "분기 실적 (최근 5분기)"], horizontal=True, label_visibility="collapsed")
+                st.write("") 
 
                 if "연간" in view_option:
                     if not is_korea:
                         st.info("미국 주식은 지원하지 않습니다.")
                     else:
                         DART_API_KEY = "f7626661c1cd11987d285bd50b6d94ffdc08ca62" 
-                        with st.spinner(f"연간 재무 데이터 분석 중... ({selected})"):
+                        with st.spinner(f"연간 데이터 분석 중... ({selected})"):
                             display_df, raw_data, msg = fetch_core_financials(DART_API_KEY, dart_code)
                         
                         if display_df is not None:
@@ -504,8 +497,8 @@ if menu == "📊 개별 종목 분석":
                             st.plotly_chart(fig, use_container_width=True)
                         else: st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
 
-                else: # [분기] 선택 시
-                    st.caption("※ 분기 데이터는 속도를 위해 야후 파이낸스(yfinance) 데이터를 사용합니다.")
+                else: # 분기 선택 시
+                    st.caption("※ 분기 데이터는 야후 파이낸스 기준이며, 제공 범위에 따라 5년 미만일 수 있습니다.")
                     df_quarter = fetch_quarterly_data(yf_code)
                     if df_quarter is not None:
                         st.dataframe(df_quarter.set_index('분기').T.style.format("{:,.0f}"), use_container_width=True)
@@ -513,7 +506,7 @@ if menu == "📊 개별 종목 분석":
                         fig_q = go.Figure()
                         fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['매출액(억)'], name='매출액', marker_color='#90CAF9'))
                         fig_q.add_trace(go.Bar(x=df_quarter['분기'], y=df_quarter['영업이익(억)'], name='영업이익', marker_color='#2962FF'))
-                        fig_q.update_layout(title="최근 분기 실적 추이", template="plotly_dark", barmode='group', height=400)
+                        fig_q.update_layout(title="분기 실적 추이", template="plotly_dark", barmode='group', height=400)
                         st.plotly_chart(fig_q, use_container_width=True)
                     else:
                         st.warning("분기 데이터를 불러올 수 없습니다.")
