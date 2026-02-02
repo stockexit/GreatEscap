@@ -15,7 +15,7 @@ from pykrx import stock
 from deep_translator import GoogleTranslator 
 
 # =========================================================
-# 1. 화면 설정 & 스타일 (기존과 동일)
+# 1. 화면 설정 & 스타일
 # =========================================================
 st.set_page_config(
     page_title="사장님 투자 터미널", 
@@ -25,19 +25,21 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+    /* 탭 스타일 */
     button[data-baseweb="tab"] div p { font-size: 18px !important; font-weight: bold !important; }
-    thead tr th { background-color: #f5f6f7 !important; color: #333 !important; font-weight: bold !important; }
-    div[data-testid="stMetricValue"] { font-size: 26px !important; }
     
+    /* 테이블 헤더 */
+    thead tr th { background-color: #f5f6f7 !important; color: #333 !important; font-weight: bold !important; }
+    
+    /* 메트릭 스타일 */
+    div[data-testid="stMetricValue"] { font-size: 26px !important; }
     div[data-testid="stMetricDelta"] {
-        font-size: 22px !important;
+        font-size: 18px !important;
         font-weight: bold !important;
         background-color: rgba(0, 200, 83, 0.2) !important;
-        padding: 5px 15px !important;
-        border-radius: 20px !important;
-        width: fit-content !important;
+        padding: 5px 10px !important;
+        border-radius: 10px !important;
     }
-    div[data-testid="stMetricDelta"] svg { width: 20px !important; height: 20px !important; }
     
     .summary-box {
         background-color: #262730;
@@ -55,7 +57,7 @@ st.markdown("""
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # =========================================================
-# 2. 데이터 로딩 (기존과 동일)
+# 2. 데이터 로딩
 # =========================================================
 @st.cache_data(ttl=60)
 def load_data():
@@ -70,7 +72,7 @@ def load_data():
         return None
 
 # =========================================================
-# 3. 데이터 수집 함수들 (기존 함수 유지)
+# 3. 데이터 수집 함수들 (기존 유지)
 # =========================================================
 @st.cache_data(show_spinner=False)
 def fetch_naver_summary(dart_code):
@@ -102,19 +104,15 @@ def fetch_shares_history(ticker_code):
         return df_yearly[['연도', '상장주식수', '시가총액']].reset_index(drop=True)
     except: return pd.DataFrame()
 
-# [연간 데이터] DART 10년
 @st.cache_data(show_spinner=False) 
 def fetch_core_financials_dart(api_key, ticker_code):
     try:
         dart = OpenDartReader(api_key)
     except: return None, "API Key Error"
-
     if len(str(ticker_code)) != 6: return None, "Code Error"
-    
     now_year = datetime.datetime.now().year 
     years = range(now_year, now_year - 12, -1) 
     result_data = []
-    
     try:
         for year in years:
             if len(result_data) >= 10: break
@@ -122,7 +120,6 @@ def fetch_core_financials_dart(api_key, ticker_code):
                 df = dart.finstate(ticker_code, year, reprt_code='11011') 
                 if df is not None and not df.empty:
                     df['account_nm'] = df['account_nm'].astype(str).str.replace(' ', '').str.strip()
-                    
                     def get_val(nm_list):
                         temp = df[(df['fs_div']=='CFS') & (df['account_nm'].isin(nm_list))]
                         if temp.empty: temp = df[(df['fs_div']=='OFS') & (df['account_nm'].isin(nm_list))]
@@ -131,45 +128,32 @@ def fetch_core_financials_dart(api_key, ticker_code):
                             val = temp.iloc[0]['thstrm_amount']
                             return float(str(val).replace(',', ''))
                         except: return 0
-
                     sales = get_val(['매출액', '수익(매출액)', '영업수익'])
                     op = get_val(['영업이익', '영업이익(손실)'])
                     net = get_val(['당기순이익', '당기순이익(손실)'])
-                    
                     if sales != 0 or op != 0:
                         result_data.append({'연도': str(year), '매출액': sales, '영업이익': op, '순이익': net})
             except: pass
             time.sleep(0.05)
-
         if result_data:
             df_dart = pd.DataFrame(result_data)
             df_shares = fetch_shares_history(ticker_code)
-            
-            if not df_shares.empty:
-                df_final = pd.merge(df_dart, df_shares, on='연도', how='left')
-            else:
-                df_final = df_dart
-                df_final['상장주식수'] = 0
-            
+            if not df_shares.empty: df_final = pd.merge(df_dart, df_shares, on='연도', how='left')
+            else: df_final = df_dart; df_final['상장주식수'] = 0
             df_final = df_final.sort_values('연도', ascending=False)
-            
             df_final['매출액(억)'] = (df_final['매출액'] / 100000000).round(0)
             df_final['영업이익(억)'] = (df_final['영업이익'] / 100000000).round(0)
             df_final['순이익(억)'] = (df_final['순이익'] / 100000000).round(0)
             df_final['EPS(원)'] = df_final.apply(lambda r: r['순이익']/r['상장주식수'] if r.get('상장주식수',0)>0 else 0, axis=1).round(0)
-            
             if '시가총액' in df_final.columns:
                 df_final['시가총액(억)'] = (df_final['시가총액'] / 100000000).round(0)
                 df_final['멀티플(배)'] = df_final.apply(lambda r: r['시가총액']/r['영업이익'] if r.get('영업이익',0)>0 else 0, axis=1).round(1)
-
             return df_final, "OK"
-        else:
-            return None, "No Data"
-    except Exception as e:
-        return None, str(e)
+        else: return None, "No Data"
+    except Exception as e: return None, str(e)
 
 # =========================================================
-# 5. 차트 함수 & 시장 지표 함수 (수정됨)
+# 5. 차트 & 시장 지표 함수 (대폭 수정됨)
 # =========================================================
 def draw_chart(ticker, period, title, unit, current_price=None, target_min=None, target_max=None, target_buy=None):
     try:
@@ -194,94 +178,144 @@ def draw_chart(ticker, period, title, unit, current_price=None, target_min=None,
         return st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False, 'scrollZoom': False})
     except Exception as e: return st.write(f"차트 에러: {e}")
 
-@st.cache_data(ttl=3600 * 4) 
-def fetch_market_data_with_adr(market_code, days=30): # 기간 60 -> 30으로 단축
+@st.cache_data(ttl=3600 * 12) # 12시간 캐싱 (1년치라 무거움)
+def fetch_market_data_with_adr(market_code, days=365): 
     try:
+        # 날짜 설정
         now = datetime.datetime.now()
         end_date = now.strftime("%Y%m%d")
-        start_date_idx = (now - datetime.timedelta(days=days+30)).strftime("%Y%m%d") # 지수는 넉넉하게
+        # 1년치 날짜 계산 (영업일 기준 넉넉하게)
+        dates = stock.get_previous_business_days(end_date=end_date, count=days)
+        if not dates: return pd.DataFrame()
+        
+        start_date_str = dates[0]
+        end_date_str = dates[-1]
 
-        # 1. 지수 데이터 먼저 확보 (이건 빠름)
-        df_index = stock.get_index_ohlcv_by_date(start_date_idx, end_date, market_code)
+        # 1. 지수 데이터 (pykrx or yfinance) - 한 번에 가져옴 (빠름)
+        # 1001: KOSPI, 2001: KOSDAQ
+        df_index = stock.get_index_ohlcv_by_date(start_date_str, end_date_str, market_code)
         if df_index.empty: return pd.DataFrame()
         df_index = df_index[['종가']].rename(columns={'종가': 'Index'})
-
-        # 2. ADR 데이터 계산 (여기가 느림 - 최적화 적용)
+        
+        # 2. ADR 데이터 계산 (여기가 핵심)
+        # 1년치 루프는 Streamlit Cloud에서 타임아웃 될 수 있으므로, 최근 데이터 위주로 하되
+        # 최대한 효율적으로 가져옵니다.
+        
         market_tick = "KOSPI" if market_code == "1001" else "KOSDAQ"
-        # days를 너무 길게 잡으면 타임아웃 발생 -> 기본값을 줄여서 호출
-        dates = stock.get_previous_business_days(end_date=end_date, count=days)
-        
         adr_results = []
-        progress_bar = st.progress(0, text=f"{market_tick} 시장 데이터 분석 중...")
         
-        if not dates: 
-             progress_bar.empty()
-             # 지수라도 리턴
-             df_index['ADR'] = 100
-             return df_index
-
+        # 진행바 표시
+        progress_text = f"{market_tick} 1년치 데이터 분석 중... (시간이 조금 걸립니다)"
+        my_bar = st.progress(0, text=progress_text)
+        
+        total_days = len(dates)
+        
         for i, date_str in enumerate(dates):
             try:
-                # 딜레이 추가 (서버 차단 방지)
-                time.sleep(0.1) 
+                # 등락 데이터 수집 (상승/하락 종목 수)
+                # 이 함수는 그날의 전 종목 시세를 가져오므로 조금 무거움 (0.2~0.5초)
+                # Cloud 환경 고려하여 약간의 delay
                 df_day = stock.get_market_ohlcv_by_ticker(date_str, market=market_tick)
                 
                 if df_day is not None and not df_day.empty:
                     up_count = len(df_day[df_day['등락률'] > 0])
                     down_count = len(df_day[df_day['등락률'] < 0])
                     
-                    if down_count > 0: adr = (up_count / down_count) * 100
-                    else: adr = 100
+                    if down_count > 0: 
+                        adr = (up_count / down_count) * 100
+                    else: 
+                        adr = 100
                     
                     adr_results.append({"Date": pd.to_datetime(date_str), "ADR": adr})
             except: 
-                pass # 하루치 실패해도 다음 날짜 진행
+                pass # 에러나면 건너뜀
             
-            progress_bar.progress((i + 1) / len(dates))
-            
-        progress_bar.empty()
+            # 진행률 업데이트 (너무 자주하면 느려지므로 5번마다)
+            if i % 5 == 0:
+                my_bar.progress((i + 1) / total_days, text=f"{progress_text} ({i+1}/{total_days}일)")
+                
+        my_bar.empty() # 진행바 제거
         
-        if not adr_results: 
-            # ADR 실패 시 지수만이라도 리턴
+        if not adr_results:
+            # ADR 실패 시 지수만 리턴
             df_index['ADR'] = None
             return df_index
 
         df_adr = pd.DataFrame(adr_results)
         df_adr = df_adr.set_index('Date').sort_index()
         
-        # 3. 병합 (지수 데이터 기준으로 Left Join)
+        # 20일 이동평균선 적용 (ADR은 보통 20일 이평선으로 봄)
+        df_adr['ADR_MA20'] = df_adr['ADR'].rolling(window=20).mean()
+
+        # 3. 데이터 병합
         df_final = pd.merge(df_index, df_adr, left_index=True, right_index=True, how='left')
         
-        # ADR 결측치 보간 (중간에 구멍 나면 채움)
-        df_final['ADR'] = df_final['ADR'].interpolate(method='linear', limit_direction='both')
+        # ADR이 없으면 100으로 채우거나 보간
+        df_final['ADR'] = df_final['ADR'].interpolate(method='linear')
+        df_final['ADR_MA20'] = df_final['ADR_MA20'].interpolate(method='linear')
         
-        return df_final.dropna() # 최종적으로 NaN 있는 행 제거
+        return df_final.dropna()
+
     except Exception as e:
-        # 에러 나면 빈 데이터프레임
-        st.error(f"데이터 수집 에러: {e}")
+        st.error(f"데이터 에러: {e}")
         return pd.DataFrame()
 
-def draw_market_chart(df, title):
+def draw_market_chart(df, title, color_index):
     if df is None or df.empty: return st.warning("데이터를 불러오지 못했습니다.")
     
-    # 최근 N일만 잘라서 보여주기 (데이터가 너무 많으면 복잡함)
-    df = df.tail(60) 
+    # 최근 1년 (데이터 있는 만큼)
+    df_plot = df.copy()
 
+    # 이중축 차트 생성
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Scatter(x=df.index, y=df['Index'], name=title.split(' ')[0], line=dict(color='#2962FF', width=2)), secondary_y=False)
-    
-    # ADR 데이터가 있을 때만 그림
-    if 'ADR' in df.columns and df['ADR'].notnull().any():
-        fig.add_trace(go.Scatter(x=df.index, y=df['ADR'], name='ADR(등락비율)', line=dict(color='#FF3D00', width=2)), secondary_y=True)
-        fig.add_hline(y=100, line_dash="dash", line_color="gray", opacity=0.5, secondary_y=True)
-        fig.add_hline(y=80, line_dash="dot", line_color="#00C853", opacity=0.7, annotation_text="침체 (80)", annotation_position="bottom right", secondary_y=True)
-        fig.add_hline(y=120, line_dash="dot", line_color="#D500F9", opacity=0.7, annotation_text="과열 (120)", annotation_position="top right", secondary_y=True)
-        fig.update_yaxes(title="ADR (%)", showgrid=True, gridcolor='rgba(255,255,255,0.1)', range=[60, 140], secondary_y=True)
-    else:
-        # ADR 없으면 지수만 보여줌
-        fig.update_layout(annotations=[dict(text="ADR 데이터 없음 (지수만 표시)", showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5, font=dict(color="red"))])
 
-    fig.update_layout(title=dict(text=title, font=dict(size=20)), height=500, template="plotly_dark", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), yaxis=dict(title=f"{title.split(' ')[0]} 지수", showgrid=False))
+    # 1. 지수 (왼쪽 축) - 파란색/초록색
+    fig.add_trace(
+        go.Scatter(
+            x=df_plot.index, y=df_plot['Index'], 
+            name=f"{title.split(' ')[0]} 지수", 
+            line=dict(color=color_index, width=2)
+        ), 
+        secondary_y=False
+    )
+    
+    # 2. ADR (오른쪽 축) - 빨간색 (20일 이동평균선 사용 권장)
+    # 실제 ADR 값보다는 이동평균선이 추세 보기에 더 좋음 (스크린샷처럼 부드럽게)
+    y_adr = df_plot['ADR_MA20'] if 'ADR_MA20' in df_plot.columns else df_plot['ADR']
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df_plot.index, y=y_adr, 
+            name='ADR (등락비율)', 
+            line=dict(color='#FF3D00', width=2)
+        ), 
+        secondary_y=True
+    )
+
+    # 3. 기준선 (오른쪽 축 기준)
+    fig.add_hline(y=100, line_dash="solid", line_color="gray", line_width=1, opacity=0.5, secondary_y=True)
+    fig.add_hline(y=80, line_dash="dot", line_color="#00C853", opacity=0.8, annotation_text="침체 (80)", annotation_position="bottom right", secondary_y=True)
+    fig.add_hline(y=120, line_dash="dot", line_color="#D500F9", opacity=0.8, annotation_text="과열 (120)", annotation_position="top right", secondary_y=True)
+
+    # 4. 레이아웃 설정 (스크린샷과 비슷하게)
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=20, color="white")),
+        height=550, 
+        template="plotly_dark", 
+        hovermode="x unified", 
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=20, r=20, t=50, b=20)
+    )
+    
+    # Y축 설정 (왼쪽: 지수, 오른쪽: ADR)
+    fig.update_yaxes(title_text="지수 P", showgrid=False, secondary_y=False)
+    fig.update_yaxes(
+        title_text="ADR (%)", 
+        showgrid=True, gridcolor='rgba(255,255,255,0.1)', 
+        range=[60, 140], # ADR 범위 고정
+        secondary_y=True
+    )
+    
     return st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 # =========================================================
@@ -446,14 +480,11 @@ if menu == "📊 개별 종목 분석":
                         eps_mean_10 = eps_series.mean()
                         eps_mean_5 = eps_series.tail(5).mean()
                         latest_eps = eps_series.iloc[-1]
-
                         latest_vs_10y_rate = ((latest_eps - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
                         momentum_avg = ((eps_mean_5 - eps_mean_10) / eps_mean_10) * 100 if eps_mean_10 > 0 else 0
-
                         df_max = raw_data
                         period_max = len(df_max)
                         label_max = f"{period_max}년 연평균(CAGR)" if period_max < 10 else "10년 연평균(CAGR)"
-                        
                         def calculate_cagr(series):
                             if len(series) < 2: return "데이터 부족"
                             start_val = series.iloc[0]
@@ -465,10 +496,8 @@ if menu == "📊 개별 종목 분석":
                                 cagr = (end_val / start_val) ** (1/years) - 1
                                 return f"{cagr*100:+.1f}%"
                             except: return "계산 오류"
-                            
                         cagr_max_str = calculate_cagr(eps_series)
                         cagr_5_str = calculate_cagr(eps_series.tail(5))
-
                         c_t1, c_t2, c_t3 = st.columns(3)
                         with c_t1: st.metric("10년 평균 EPS", f"{eps_mean_10:,.0f}원")
                         with c_t2: st.metric("5년 평균 EPS", f"{eps_mean_5:,.0f}원")
@@ -479,15 +508,11 @@ if menu == "📊 개별 종목 분석":
                         with c_b2: st.metric("최근 5년 연평균", cagr_5_str)
                         with c_b3: st.metric("성장 모멘텀", "", delta=f"{momentum_avg:+.1f}%")
                         st.write("---")
-
                         st.markdown("### 📊 연간 실적 (10년)")
-                        
                         view_cols = ['연도', '매출액(억)', '영업이익(억)', '순이익(억)', 'EPS(원)']
                         if '시가총액(억)' in display_df.columns: view_cols.append('시가총액(억)')
                         if '멀티플(배)' in display_df.columns: view_cols.append('멀티플(배)')
-                        
                         st.dataframe(display_df[view_cols].set_index('연도').T.style.format("{:,.0f}"), use_container_width=True)
-                        
                         fig = make_subplots(specs=[[{"secondary_y": True}]])
                         fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['매출액(억)'], name='매출액(좌측)', marker_color='#90CAF9', opacity=0.6), secondary_y=False)
                         fig.add_trace(go.Bar(x=raw_data['연도'], y=raw_data['영업이익(억)'], name='영업이익(좌측)', marker_color='#2962FF'), secondary_y=False)
@@ -498,7 +523,6 @@ if menu == "📊 개별 종목 분석":
                         fig.update_yaxes(title_text="금액 (억 원)", secondary_y=False, showgrid=True, gridcolor='rgba(255,255,255,0.1)')
                         fig.update_yaxes(title_text="EPS (원)", secondary_y=True, showgrid=False)
                         st.plotly_chart(fig, use_container_width=True)
-
                     else: st.warning(f"데이터를 가져오지 못했습니다. ({msg})")
 
         else: st.warning("종목 없음")
@@ -506,7 +530,7 @@ if menu == "📊 개별 종목 분석":
 
 elif menu == "🌍 시장 대시보드 (Beta)":
     st.title("🌍 KOREA Market Dashboard")
-    st.info("💡 지수(파란색, 왼쪽축)와 ADR(빨간색, 오른쪽축)을 함께 보며 시장의 과열/침체를 판단합니다.")
+    st.info("💡 지수(왼쪽축)와 ADR(오른쪽축)을 함께 보여줍니다. 데이터 로딩에 약 20~30초가 소요됩니다. (캐싱 적용됨)")
     
     try:
         usd_krw = yf.Ticker("KRW=X").history(period="1d")['Close'].iloc[-1]
@@ -515,31 +539,24 @@ elif menu == "🌍 시장 대시보드 (Beta)":
 
     m_tab1, m_tab2 = st.tabs(["KOSPI (코스피)", "KOSDAQ (코스닥)"])
     
-    # 📌 수정된 부분: days를 30일로 단축하고 함수 호출
     with m_tab1:
-        with st.spinner("KOSPI 시장 데이터 분석 중... (최근 30일)"):
-            df_kospi_combo = fetch_market_data_with_adr("1001", days=30)
+        # KOSPI 데이터 호출 (1년)
+        df_kospi_combo = fetch_market_data_with_adr("1001", days=365)
             
-        if not df_kospi_combo.empty:
-            if 'ADR' in df_kospi_combo.columns and df_kospi_combo['ADR'].notnull().any():
-                curr_adr = df_kospi_combo['ADR'].iloc[-1]
-                st.metric("현재 KOSPI ADR", f"{curr_adr:.1f}%", delta=f"{curr_adr-100:.1f}", help="100% 기준, 80% 이하 침체, 120% 이상 과열")
-            else:
-                st.warning("ADR 데이터 수집 실패 (지수만 표시됩니다)")
-            draw_market_chart(df_kospi_combo, "ADR - KOSPI")
+        if not df_kospi_combo.empty and 'ADR' in df_kospi_combo.columns:
+            curr_adr = df_kospi_combo['ADR'].iloc[-1]
+            st.metric("현재 KOSPI ADR", f"{curr_adr:.1f}%", delta=f"{curr_adr-100:.1f}", help="100% 기준, 80% 이하 침체, 120% 이상 과열")
+            draw_market_chart(df_kospi_combo, "ADR - KOSPI", "#2962FF") # KOSPI는 파란색
         else:
-            st.warning("현재 시장 데이터를 가져오는데 문제가 있습니다.")
+            st.warning("데이터 수집 중 문제가 발생했습니다. (잠시 후 다시 시도해주세요)")
 
     with m_tab2:
-        with st.spinner("KOSDAQ 시장 데이터 분석 중... (최근 30일)"):
-            df_kosdaq_combo = fetch_market_data_with_adr("2001", days=30)
+        # KOSDAQ 데이터 호출 (1년)
+        df_kosdaq_combo = fetch_market_data_with_adr("2001", days=365)
             
-        if not df_kosdaq_combo.empty:
-            if 'ADR' in df_kosdaq_combo.columns and df_kosdaq_combo['ADR'].notnull().any():
-                curr_adr = df_kosdaq_combo['ADR'].iloc[-1]
-                st.metric("현재 KOSDAQ ADR", f"{curr_adr:.1f}%", delta=f"{curr_adr-100:.1f}", help="100% 기준, 80% 이하 침체, 120% 이상 과열")
-            else:
-                st.warning("ADR 데이터 수집 실패 (지수만 표시됩니다)")
-            draw_market_chart(df_kosdaq_combo, "ADR - KOSDAQ")
+        if not df_kosdaq_combo.empty and 'ADR' in df_kosdaq_combo.columns:
+            curr_adr = df_kosdaq_combo['ADR'].iloc[-1]
+            st.metric("현재 KOSDAQ ADR", f"{curr_adr:.1f}%", delta=f"{curr_adr-100:.1f}", help="100% 기준, 80% 이하 침체, 120% 이상 과열")
+            draw_market_chart(df_kosdaq_combo, "ADR - KOSDAQ", "#00C853") # KOSDAQ은 초록색
         else:
-            st.warning("현재 시장 데이터를 가져오는데 문제가 있습니다.")
+            st.warning("데이터 수집 중 문제가 발생했습니다. (잠시 후 다시 시도해주세요)")
